@@ -120,7 +120,13 @@ The integrated drag build's 60-second resource observation recorded about 82 MiB
 private memory and no measurable CPU-time increase. Input events were recorded;
 this is not a controlled idle qualification. See [baseline](BASELINE.md).
 
-Verify the manual Explorer flow, then implement durable project references,
+Collections is now the agreed product term. Its durable storage foundation is
+implemented in a separate database with independent typed IDs, native paths,
+bounded pages/queues, transactional edits, and explicit source availability.
+Restart/index-rebuild preservation and unread-save shutdown tests pass. See
+[collections architecture](COLLECTIONS.md). Desktop integration is in progress.
+
+Verify the manual Explorer flow, then implement durable collection references,
 ordering/folders, and multi-selection. Keep incremental indexing,
 source reconciliation, broader device tests, and performance qualification
 explicit. Sift is still a prototype, not a finished sampler.

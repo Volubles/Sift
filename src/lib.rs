@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod catalog;
+pub mod collections;
 pub mod config;
 pub mod library;
 pub mod search;
