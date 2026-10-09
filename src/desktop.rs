@@ -24,11 +24,12 @@ pub fn run(options: Options) -> eframe::Result {
     let expects_capture = options.smoke_screenshot.is_some();
     let capture_passed = Arc::new(AtomicBool::new(false));
     let reported_capture = capture_passed.clone();
+    let renderer = selected_renderer()?;
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1120.0, 720.0])
             .with_min_inner_size([800.0, 500.0]),
-        renderer: eframe::Renderer::Wgpu,
+        renderer,
         ..Default::default()
     };
     eframe::run_native(
@@ -50,6 +51,17 @@ pub fn run(options: Options) -> eframe::Result {
         ))));
     }
     Ok(())
+}
+
+fn selected_renderer() -> eframe::Result<eframe::Renderer> {
+    match std::env::var("SIFT_RENDERER").as_deref() {
+        Ok("glow") | Err(std::env::VarError::NotPresent) => Ok(eframe::Renderer::Glow),
+        #[cfg(feature = "wgpu-renderer")]
+        Ok("wgpu") => Ok(eframe::Renderer::Wgpu),
+        _ => Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+            "Unsupported SIFT_RENDERER; WGPU requires the wgpu-renderer Cargo feature",
+        )))),
+    }
 }
 
 struct Browser {

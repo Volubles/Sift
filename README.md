@@ -58,7 +58,7 @@ an indexed filename prefix.
 
 The view renders visible rows and caches at most four 128-record pages. Workers
 use bounded queues and wake the UI on results; there is no idle polling timer.
-The prototype uses egui/eframe 0.36.2, the WGPU renderer, and RFD 0.17.2 for the
+The prototype uses egui/eframe 0.36.2, the Glow renderer, and RFD 0.17.2 for the
 Windows folder dialog. See [checkpoint verification](docs/CHECKPOINT.md).
 
 Current scans refresh metadata but do not reconcile deleted/moved files or skip

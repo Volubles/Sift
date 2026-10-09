@@ -6,7 +6,8 @@ SQLite persistence, and bounded queries; other areas remain planned. Rust 1.98.1
 rusqlite 0.40.2, and Symphonia 0.6.1 are pinned and verified for this slice.
 
 The next slice adds `desktop`, `worker`, and `config`. egui/eframe 0.36.2 renders
-the native WGPU window; RFD 0.17.2 supplies the Windows folder dialog. The index
+the native window; Glow is now the default after the [release baseline](BASELINE.md),
+and WGPU remains optional. RFD 0.17.2 supplies the Windows folder dialog. The index
 worker owns a writable connection and the search worker owns an independent
 read-only connection. Query generations reject stale results. The UI retains
 at most four 128-record pages; event/query/scan queues are bounded at 8/4/1.

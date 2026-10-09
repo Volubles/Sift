@@ -2,7 +2,7 @@
 
 ## Status and proposed budgets
 
-No release performance baseline exists yet. A native debug smoke test has
+A first [release idle baseline](BASELINE.md) now exists. A native debug smoke test has
 rendered a 100,000-record synthetic catalog while loading 128 metadata records
 into the view; this is bounded-loading evidence, not CPU/RAM or latency proof.
 See [checkpoint verification](CHECKPOINT.md). The following are proposed prototype
