@@ -1,26 +1,28 @@
 # Sift
 
-Sift är ett lokalt samplebibliotek för ljudeffekter, samples och musikfiler.
-Målet är snabb sökning, smidig förhandslyssning och projekt där valda ljud kan
-samlas och kopieras till andra mappar. Låg CPU- och minnesanvändning är ett
-grundkrav.
+Sift is a local sample browser for sound effects, samples, and music files.
+It aims to provide fast search, responsive audio previews, and projects for
+collecting sounds and copying them into other folders. Low CPU and memory use
+are core requirements.
 
-Projektet är i förberedelsefasen. Ingen programkod eller körbar app finns ännu.
-Rust är vald som huvudspråk. UI och ljudbibliotek ska verifieras i en liten
-prototyp innan de låses för resten av implementationen.
+The project is in its preparation phase. No application code or runnable app
+exists yet. Rust is the primary language. UI and audio libraries must be
+validated in a small prototype before the implementation commits to them.
 
-Git-historiken ska bestå av små, sammanhängande Conventional Commits vid
-naturliga checkpoints. Privata ljudbanker, databaser, exporter, mätresultat och
-IDE-inställningar hör inte hemma i repot.
+Development uses small, coherent Conventional Commits at natural checkpoints.
+Private audio libraries, databases, exports, raw measurements, and IDE settings
+do not belong in the repository.
 
-## Börja här
+All project documentation and user-visible content are written in English.
 
-- [AGENTS.md](AGENTS.md): arbetsregler, kodkvalitet och verifiering.
-- [Aktuell status](docs/STATUS.md): vad som faktiskt finns och nästa steg.
-- [Produktkrav](docs/PRODUCT.md): funktioner, fasta regler och acceptans.
-- [Arkitektur](docs/ARCHITECTURE.md): teknisk riktning och ansvarsgränser.
-- [Prestanda](docs/PERFORMANCE.md): preliminära budgetar och mätmetod.
-- [Git-konventioner](GIT-COMMIT-CONVENTIONS.md): små naturliga checkpoints.
+## Start here
 
-Programmet kan ännu inte byggas eller köras. Run-/buildinstruktioner tillkommer
-när det finns en verklig Cargo-implementation att verifiera.
+- [AGENTS.md](AGENTS.md): working agreement, code quality, and verification.
+- [Current status](docs/STATUS.md): what exists and the next step.
+- [Product requirements](docs/PRODUCT.md): features, invariants, and acceptance.
+- [Architecture](docs/ARCHITECTURE.md): technical direction and responsibilities.
+- [Performance](docs/PERFORMANCE.md): provisional budgets and measurement method.
+- [Git conventions](GIT-COMMIT-CONVENTIONS.md): small, natural checkpoints.
+
+The application cannot be built or run yet. Build/run instructions will be
+added when a real Cargo implementation is available and verified.

@@ -1,145 +1,144 @@
-# Teknisk riktning
+# Technical direction
 
-Dokumentet beskriver avsedd arkitektur. Ingen av modulerna finns ännu.
-Rust är beslutat; biblioteksvalen nedan ska bevisas i prototypen och därefter
-registreras med valda versioner, alternativ och skäl.
+This document describes intended architecture. None of the modules exists yet.
+Rust is agreed; validate the proposed libraries in a prototype before recording
+selected versions, alternatives, and reasons.
 
-## Kandidater och beslutsgränser
+## Candidates and decision boundaries
 
-| Del | Föreslagen kandidat | Vad ska verifieras före låsning? |
+| Area | Candidate | Verify before committing to it |
 | --- | --- | --- |
-| UI | egui/eframe | Resursförbrukning, stora listor, waveform, tangentbord och native drag-and-drop. |
-| Lagring | SQLite med FTS5, Rustadapter exempelvis rusqlite | Transaktioner, migrering, söksemantik, låsning och verkliga query plans. |
-| Avkodning | Symphonia | Faktiska codecvarianter, seek, metadata och stora filer. |
-| Ljudenhet | CPAL | Windowsenheter, sample-rate-anpassning, latens, underruns och enhetsbyte. |
-| Windowsintegration | Liten native adapter | Filöverföring med endast kopiering, flerval och krockbeteende i Utforskaren. |
+| UI | egui/eframe | Resource usage, large lists, waveforms, keyboard interaction, native outgoing drag. |
+| Storage | SQLite with FTS5 and a Rust adapter such as rusqlite | Transactions, migration, search semantics, locking, actual query plans. |
+| Decoding | Symphonia | Real codec variants, seeking, metadata, and long files. |
+| Audio device | CPAL | Windows devices, sample-rate adaptation, latency, underruns, and device changes. |
+| Windows integration | Small native adapter | Copy-only file transfer, multi-selection, and Explorer conflict behavior. |
 
-Ett modernt verktyg ska tillföra en konkret förbättring. Välj en kompatibel,
-underhållen stabil toolchain och dokumentera versionen i `rust-toolchain.toml`
-när Cargo-projektet skapas. Utgå från Rust edition 2024 om kandidaterna stöder
-den. Committera appens `Cargo.lock`. Nightly, stora ramverk och nya tjänster
-kräver ett faktiskt behov, inte en allmän önskan att vara modern.
+A modern tool should provide a concrete improvement. Choose a compatible,
+maintained stable toolchain and record its version in `rust-toolchain.toml`
+when Cargo is introduced. Start with Rust edition 2024 if the candidates support
+it. Track the application's `Cargo.lock`. Nightly, large frameworks, and new
+services require actual needs.
 
-Native UI är utgångspunkten. Byt UI om prototypens integrations- eller
-prestandabevis visar att ett annat val ger ett bättre helhetsresultat.
-Skriv ett kort beslut i detta dokument eller en avgränsad ADR innan ett större
-byte. Bevara kärnlogiken så att UI-valet inte äger bibliotekets regler.
+Native UI is the starting point. Change the UI choice if prototype evidence
+shows another option improves integration or performance. Record a short
+decision here or in a focused ADR before a major change. Keep library rules
+independent of the UI.
 
-## Ansvar och beroenden
+## Responsibilities and dependencies
 
-| Område | Äger | Ska inte äga |
+| Area | Owns | Must not own |
 | --- | --- | --- |
-| `app` | Start, inställningar, wiring och kontrollerad shutdown | Sökregler, avkodning eller SQL i event handlers. |
-| `library` | Rötter, filidentitet, skanning och bibliotekstillstånd | UI eller uppspelningsenhet. |
-| `search` | Frågor, filter, stabil sortering och resultatsidor | Direkt åtkomst till UI-widgets. |
-| `projects` | Projekt, objektreferenser, ordning och sparregler | Mutation av biblioteksoriginal. |
-| `audio` | Decode, buffering, seek, resampling och playback | Projektlagring och sökfrågor. |
-| `analysis` | Waveform och versionerade akustiska egenskaper | UI-tråd eller obegränsad fullfilsladdning. |
-| `storage` | SQL, migrering och transaktionsgränser | Produktbeslut och native drag-and-drop. |
-| `export` | Målplan, namnkonflikter, kopiering och utfall | Radering/flytt av källfiler. |
-| `platform` | Native dialoger, sökvägsbeteende och drag-and-drop | Portabla domänregler. |
-| `ui` | Presentation, interaktion och synligt tillstånd | Blockerande I/O och dold affärslogik. |
+| `app` | Startup, configuration, wiring, controlled shutdown | Search rules, decoding, SQL in event handlers. |
+| `library` | Roots, file identity, scanning, library state | UI or audio devices. |
+| `search` | Queries, filters, stable sorting, result pages | Direct UI widget access. |
+| `projects` | Projects, references, ordering, save rules | Modification of library originals. |
+| `audio` | Decode, buffering, seek, resampling, playback | Project persistence and search queries. |
+| `analysis` | Waveforms and versioned descriptors | UI thread or unbounded full-file loading. |
+| `storage` | SQL, migrations, transaction boundaries | Product decisions and native dragging. |
+| `export` | Destination planning, conflicts, copying, outcomes | Source deletion or movement. |
+| `platform` | Native dialogs, path semantics, drag-and-drop | Portable domain rules. |
+| `ui` | Presentation, interaction, visible state | Blocking I/O and hidden business rules. |
 
-Detta är ansvarsgränser, inte krav på tio crates eller tomma modulfiler.
-Börja med ett Cargo-paket och sammanhängande moduler. Bryt ut en crate först
-när ett faktiskt beroende, återbruk eller testbehov motiverar det. Portabel
-domänlogik ska inte bero på egui, CPAL eller Windowsobjekt.
+These are responsibility boundaries, not a requirement for ten crates or empty
+module files. Begin with one Cargo package and cohesive modules. Extract a
+crate only for a real dependency, reuse, or testing need. Portable domain
+logic must not depend on egui, CPAL, or Windows objects.
 
-## Datamodell och filidentitet
+## Data model and file identity
 
-- `LibraryRoot`: stabilt ID, rotlokator och tillgänglighet.
-- `Sample`: stabilt ID, rot och relativ OS-sökväg, filrevision och metadata.
-- `Project` / `ProjectItem`: egna ID:n, sample-referens, ordning och eventuell
-  virtuell mapp, exportnamn och anteckning.
-- Manuella taggar/favoriter: beständiga användaruppgifter med explicit ägare.
-- Waveform/analys: härledd, återbyggbar information med versionsnyckel.
+- `LibraryRoot`: stable ID, root locator, availability.
+- `Sample`: stable ID, root and relative OS path, file revision, metadata.
+- `Project` / `ProjectItem`: separate IDs, sample references, ordering,
+  optional virtual folder, export name, and note.
+- Manual tags/favorites: durable user information with an explicit owner.
+- Waveforms/analysis: rebuildable derived data with versioned keys.
 
-Behandla inte en innehållshash som den enda filidentiteten: två olika filer kan
-ha samma innehåll, och en befintlig fil kan få nytt innehåll. Ett beständigt
-sample-ID, filplats och innehållsversion har olika betydelse. Dokumentera hur
-OS-fil-ID, relativ sökväg och valfri hash används; tvetydig omlänkning kräver
-ett val. Saknade filer behåller sina referenser och manuella uppgifter.
+A content hash is not the sole file identity: different files may contain
+identical data and a file may change content. Persistent sample ID, location,
+and content revision have different meanings. Document use of OS file IDs,
+relative paths, and optional hashes. Ambiguous relinking needs a choice;
+missing files retain references and manual data.
 
-Bevara OS-sökvägar med `Path`/`PathBuf`. Förlustkonverterad visningstext får
-inte återanvändas för filoperationer. Bestäm en round-trip-säker lagring för
-stödda plattformar. Windows case/Unicode-regler ska inte förenklas till en
-global lowercase-sträng som filidentitet.
+Preserve OS paths with `Path`/`PathBuf`. Lossy display conversion must not
+feed back into file operations. Choose round-trip-safe path storage for supported
+platforms. Do not reduce Windows case/Unicode rules to a globally lowercased
+string as file identity.
 
-## Trådar och arbetsköer
+## Threads and work queues
 
-UI-tråden hanterar presentation och korta kommandon. Disk-I/O, SQL, hashing,
-avkodning och analys körs i arbetare med avgränsade köer, tydligt ägarskap och
-kontrollerad shutdown. SQLiteanslutningar har en avsiktlig ägare; varje jobb
-ska inte skapa sin egen obegränsade tråd eller anslutning.
+The UI thread handles presentation and short commands. Disk I/O, SQL, hashing,
+decoding, and analysis run in workers with bounded queues, clear ownership,
+and controlled shutdown. SQLite connections have deliberate owners; do not
+create an unbounded thread or connection per job.
 
-Snabb användarinteraktion och audio decode prioriteras framför bakgrundsanalys.
-Jobb har ID/generation, cancellation och definierat resultat. En gammal
-sökning, waveform eller decode får inte uppdatera ett nyare val. Sammanfoga
-progresshändelser och använd backpressure så att UI inte översvämmas.
+Interaction and audio decoding take priority over analysis. Jobs have
+IDs/generations, cancellation, and defined outcomes. Stale search, waveform,
+or decode work must not update a newer selection. Coalesce progress events
+and apply backpressure instead of flooding the UI.
 
-Ljudcallbacken konsumerar förberedd audio från en begränsad buffert. Den får
-inte göra fil-I/O, SQL, loggning, heapallokering eller vänta på lås/andra trådar.
-Vid underrun produceras definierad tystnad och en räknare som avläses utanför
-callbacken. Seek/enhetsbyte använder en tydlig state machine och versionerade
-buffertar så att gammalt ljud inte läcker in i en ny uppspelning.
+The audio callback consumes prepared samples from a bounded buffer. It must not
+perform file I/O, SQL, logging, heap allocation, or wait on locks/other threads.
+On underrun, produce defined silence and update counters read outside the
+callback. Seeking/device changes use an explicit state machine and versioned
+buffers to prevent old audio entering new playback.
 
-Använd synkron Rust och ett litet antal arbetare där det räcker. Lägg till en
-async-runtime först när den löser ett konkret integrationsbehov. CPU-tunga
-jobb blir inte billiga bara för att de ligger i en async-funktion.
+Use synchronous Rust with a small number of workers where sufficient. Introduce
+an async runtime only for a concrete integration need. CPU-heavy jobs do not
+become inexpensive merely by placing them in an async function.
 
-## Lagring och återhämtning
+## Storage and recovery
 
-Skilj användarens beständiga uppgifter från återbyggbart bibliotek/analysindex.
-En logisk separation kan börja i samma databas om radering och migrering är
-tydliga. Använd versionsstyrda migreringar, foreign keys och transaktioner för
-flerstegsändringar. Testa rollback och bevarande av användaruppgifter.
+Separate durable user data from rebuildable library/analysis indexes. Logical
+separation may initially share a database if deletion and migrations are clear.
+Use versioned migrations, foreign keys, and transactions for multi-step writes.
+Test rollback and user-data preservation.
 
-WAL och läs-/skrivanslutningar utvärderas mot det verkliga arbetsflödet.
-Säkerhetskopiera en SQLite-databas genom en metod som ger en konsekvent snapshot;
-kopiera inte en aktiv `.db` och anta att ej checkpointad WAL följde med.
-En nyare osupporterad schemaversion ska ge ett fel, inte nollställa databasen.
+Evaluate WAL and read/write connections against actual workflows. Back up SQLite
+using a consistent snapshot method; copying an active database file does not
+automatically include uncheckpointed WAL state. An unsupported newer schema
+must cause an error, not reset the database.
 
-Schemat ska separera okänt metadata från noll och fel från ännu ej analyserat.
-Indexera de faktiska filter/sorteringar som används och granska query plans för
-stora resultat. Versionssätt serialiserade projekt och inställningar.
+Distinguish unknown metadata from zero, and errors from pending analysis.
+Index actual filter/sort patterns and inspect query plans for large result sets.
+Version serialized projects and settings.
 
-## Index, cache och likhet
+## Indexes, caches, and similarity
 
-Skanna i begränsade batcher. Hasha eller avkoda bara när operationen kräver det;
-storlek och ändringstid är billiga indikationer, inte bevis på identiskt innehåll.
-Filövervakning behöver overflow/reconcile-beteende och stöd för avstängning.
-En frånkopplad rot får inte behandlas som att användaren raderat alla dess filer.
+Scan in bounded batches. Hash or decode only when required. Size and modification
+time are inexpensive change indicators, not proof of identical content.
+File watching needs overflow/reconciliation behavior and an off switch.
+An unavailable root is not evidence that the user deleted its contents.
 
-Waveformcache använder flernivåtoppar när det behövs för stora filer. Cachekey
-innehåller filrevision, algoritmversion och relevanta parametrar. Varje cache
-ska ha storleksgräns, eviction och invalidation. Ingen cache får äga enda kopian
-av manuella taggar eller projekt.
+Waveform caches can use multiresolution peaks for large files. Keys include file
+revision, algorithm version, and relevant parameters. Every cache needs a size
+limit, eviction, and invalidation. No cache may hold the only copy of a project
+or manually entered tags.
 
-Likhetssökning börjar, om den beställs, med normaliserade versionerade
-akustiska egenskaper och uppmätt kvalitet. Jämför en enkel exakt sökning innan
-ett approximerande vektorindex tillkommer; stora ANN-index har egen RAM- och
-underhållskostnad. Det går att lägga till embeddings senare utan att göra
-AI-kategorisering obligatorisk.
+If requested, similarity starts with normalized, versioned acoustic descriptors
+and measured quality. Compare simple exact search before adding an approximate
+vector index; ANN has memory and maintenance costs. Embeddings can be added
+later without making AI categorization mandatory.
 
 ## Native export
 
-Windowsfilöverföring måste ange kopiering som enda erbjudna effekt och använda
-korrekta native filreferenser. Intern UI-drag är ett annat kontrakt. Prova
-med flera filer, Unicode, krockar och modifierartangenter i Utforskaren.
+Windows file transfer must offer copying as its only effect and provide proper
+native file references. Internal UI dragging is a separate contract. Test
+multiple files, Unicode, conflicts, and modifier keys in Explorer.
 
-För appens egen export: validera mål, planera konflikter och kopiera i
-begränsade block till en unik temporär fil i målmappen. Publicera den färdiga
-filen med verifierad plattformsspecifik semantik; en kontroll av att målet
-saknas följd av en vanlig rename är inte i sig ett skydd mot race/överskrivning.
-Ersättning kräver ett uttryckligt användarval. Mål får inte aliasa källan.
-Resultatet är per fil, inklusive avbrutet, misslyckat och redan kopierat.
+For application-managed export, validate targets, plan conflicts, and copy in
+bounded blocks into a unique temporary file in the destination folder. Publish
+the completed file with verified platform semantics; checking that a target
+does not exist and then using a normal rename does not itself prevent races or
+replacement. Replacement requires an explicit user choice. Targets must not
+alias sources. Record per-file success, cancellation, failure, and prior copies.
 
-## Referenser för implementationen
+## Implementation references
 
-Verifiera dokumentation mot låsta versioner när kod skrivs.
+Verify documentation against pinned versions when writing code.
 
 - [egui](https://github.com/emilk/egui)
 - [SQLite FTS5](https://sqlite.org/fts5.html)
 - [Symphonia](https://github.com/pdeljanov/Symphonia)
 - [CPAL](https://github.com/RustAudio/cpal)
-- [Windows Shell data transfer](https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios)
+- [Windows Shell transfer](https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios)

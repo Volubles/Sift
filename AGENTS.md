@@ -1,147 +1,148 @@
-# Sift: arbetsregler för agenter
+# Sift: agent working agreement
 
-Sift är ett lokalt, resurssnålt samplebibliotek i Rust. Huvudflödet är att hitta
-ljud, förhandslyssna, spara referenser i projekt och kopiera valda ljud till
-andra mappar. Skydda original och användaruppgifter. Låg CPU/RAM, responsivitet
-och läsbar kod är kvalitetskrav, inte efterarbete.
+Sift is a local, resource-efficient sample browser written in Rust. Its core
+workflow is finding sounds, previewing them, saving references in projects, and
+copying selections to other folders. Preserve source files and user data.
+Low CPU/RAM usage, responsiveness, and readable code are quality requirements.
 
-## Återuppta arbetet
+## Resume work
 
-Vid en ny chatt eller större uppgift: läs [aktuell status](docs/STATUS.md),
-kontrollera aktuell branch, `git status --short --branch` och relevant historik.
-Skilj dokumenterad plan från faktisk kod. Undersök det berörda flödet och dess
-anropare före ändring; utgå inte från att en tidigare chatt redan bevisat det.
-För en liten textändring räcker relevant fil och berörda instruktioner.
+For a new chat or substantial task, read [current status](docs/STATUS.md),
+check the branch, `git status --short --branch`, and relevant history. Distinguish
+planned architecture from existing implementation. Inspect the affected flow
+and callers before changing it; do not assume an earlier chat proved it works.
+For a small text correction, read the relevant file and applicable instructions.
 
-Använd rätt dokument för uppgiften:
+Use the document that matches the task:
 
-| När | Läs |
+| Task | Read |
 | --- | --- |
-| Funktion, beteende eller omfattning | [Produktkrav](docs/PRODUCT.md) |
-| Modulgränser, lagring, trådar eller native integration | [Arkitektur](docs/ARCHITECTURE.md) |
-| Resurskostnad, stora bibliotek eller optimering | [Prestanda](docs/PERFORMANCE.md) |
-| Branch, staging och checkpoint-commits | [Git-konventioner](GIT-COMMIT-CONVENTIONS.md) |
+| Features, behavior, or scope | [Product requirements](docs/PRODUCT.md) |
+| Boundaries, storage, threads, or native integration | [Architecture](docs/ARCHITECTURE.md) |
+| Resource cost, large libraries, or optimization | [Performance](docs/PERFORMANCE.md) |
+| Branches, staging, and checkpoints | [Git conventions](GIT-COMMIT-CONVENTIONS.md) |
 
-## Samarbete och omfattning
+## Collaboration and scope
 
-- Kommunicera med Benjamin på svenska. Kodidentifierare, testnamn och commits
-  skrivs på tydlig engelska; projektdokumentation är på svenska.
-- Äg undersökning, implementation och verifiering inom den beställda uppgiften.
-  Fortsätt till en färdig, granskbar leverans. Be inte om ny bekräftelse för
-  redan beställda lokala ändringar, relevanta tester eller checkpoint-commits.
-- Förklara kort vad som påverkas innan större ändringar. Fråga bara när ett
-  saknat produktbeslut eller värde faktiskt hindrar ett korrekt nästa steg.
-- En beställning av dokumentation innebär att färdigställa dokumentationen;
-  den ger inte automatiskt en beställning av nästa implementationsfas.
-- Bevara orelaterade ändringar. Blanda inte in allmän städning eller nya
-  funktioner när de inte behövs för uppgiften.
-- Push, publicering, release och meddelanden till andra kräver användarens
-  uttryckliga instruktion. Skapa inte en remote eller välj publik licens av vana.
-- Skanna bara bibliotek som användaren angett för uppgiften eller godkända
-  fixtures. Radera, flytta eller skriv inte över privata original som testmetod.
-- Starta inte parallella agenter om inte användaren begär det. Vid delegation:
-  avgränsa ansvar; huvudagenten äger integration, verifiering och commits.
+- Communicate with Benjamin in Swedish. All repository documentation, README
+  content, product UI, messages, comments, identifiers, tests, and commits must
+  be in clear English. Swedish belongs in the conversation, not public artifacts.
+- Own investigation, implementation, and verification within the requested task.
+  Continue to a complete, reviewable result. Do not request renewed approval for
+  authorized local changes, relevant checks, or checkpoint commits.
+- Briefly explain the impact before substantial changes. Ask only when a missing
+  product decision or value prevents a correct next step.
+- A documentation request authorizes completing the documentation; it does not
+  automatically authorize starting the next implementation phase.
+- Preserve unrelated changes. Do not mix unrelated cleanup or new features into
+  a task unless they are necessary to complete it.
+- Pushing, publishing, releases, and messages to other people require explicit
+  user instructions. Do not create a remote or choose a public license by habit.
+- Scan only libraries identified for the task or approved fixtures. Do not
+  delete, move, or overwrite private originals as a testing technique.
+- Do not start parallel agents unless the user requests them. When delegated,
+  bound ownership; the main agent owns integration, verification, and commits.
 
-## Produktinvarianter
+## Product invariants
 
-- Projektobjekt är referenser. Taggning, projektändringar och export ändrar inte
-  originalens namn, innehåll eller plats. Extern drag-and-drop erbjuder kopiering.
-- Skilj beständiga projekt/taggar/favoriter från återbyggbart index och cache.
-  Omindexering eller cachesanering får inte radera användarens arbete.
-- Saknad källa, okänd metadata, analysfel och väntande jobb är olika tillstånd.
-  Koppla inte en tvetydig filmatchning till ett projekt utan ett uttryckligt val.
-- Appens kärnflöde fungerar offline och utan AI-kategorisering. Likhetssökning
-  får inte bli ett krav för att öppna, söka eller använda vanliga projekt.
-- Tyst överskrivning, delvis lyckad export presenterad som fullständigt lyckad
-  och förlorade osparade projektändringar är fel även om normalflödet fungerar.
+- Project items are references. Tagging, project changes, and export do not alter
+  source names, contents, or locations. External drag-and-drop offers copying.
+- Separate durable projects/tags/favorites from rebuildable indexes and caches.
+  Reindexing and cache cleanup must preserve the user's work.
+- Missing sources, unknown metadata, analysis errors, and pending jobs are
+  distinct states. Do not silently resolve ambiguous file matches.
+- The core workflow works offline without AI categorization. Similarity search
+  must not be required to open, search, or use ordinary projects.
+- Silent replacement, reporting partial export as complete success, and losing
+  unsaved project edits are bugs even when the normal path works.
 
-## Kodkvalitet och ägarskap
+## Code quality and ownership
 
-- Skriv idiomatisk, läsbar Rust. Använd beskrivande namn, raka kontrollflöden,
-  sammanhängande moduler och små funktioner med en tydlig uppgift.
-- Fixa grundorsaken på den minsta gräns som äger regeln. Granska alla anropare
-  när delat beteende ändras. Lägg inte duplicerade specialfall i UI.
-- Börja med konkreta typer. Lägg till traits/generik när de skyddar en verklig
-  gräns eller ett faktiskt test-/återbruksbehov. Skapa inte tomma lager,
-  universella managers, pluginramverk eller en crate per modul i förväg.
-- Domänregler ska kunna testas utan UI, ljudenhet eller Windows. UI presenterar
-  tillstånd; SQL, decode och filkopiering hör i sina ägande moduler.
-- Håll API:n små och synlighet avsiktlig. Modellera identitet med särskilda
-  ID-typer, tillstånd med enums och okända värden med `Option` där det passar.
-  Undvik booleanparametrar som gör ett anrop svårt att förstå.
-- Gör ägarskap och livscykler tydliga. Undvik globalt muterbart tillstånd,
-  onödiga `Arc<Mutex<_>>`, dolda initkrav och clones som döljer ägarproblem.
-- `unsafe` ska vara isolerat vid en nödvändig native/FFI-gräns. Dokumentera
-  säkerhetsinvarianten och granska pointerlivslängd, aliasing och thread affinity.
-  Använd inte unsafe för obestyrkta prestandavinster.
-- Använd `Result` för felbara operationer. `unwrap`, `expect`, `panic!` och
-  `unreachable!` får inte ersätta hantering av filer, användarinmatning, SQL
-  eller enheter. Testkod och bevisade interna invarianter kan ha motiverade undantag.
-- Ignorera inte fel med `let _ =`, tomma felgrenar eller lyckad defaultdata.
-  Best-effort cleanup ska ändå redovisa misslyckande vid ägande felgräns.
-- Kommentarer förklarar invarianten eller beslutet, inte vad raden redan säger.
-  Tillfälliga TODO ska ha konkret återstående arbete; leverera inte central
-  funktionalitet som placeholder eller `todo!()`.
+- Write idiomatic, readable Rust with descriptive names, straightforward control
+  flow, cohesive modules, and functions with a clear responsibility.
+- Fix the root cause at the smallest boundary that owns the rule. Inspect all
+  callers when shared behavior changes; do not duplicate special cases in UI.
+- Start with concrete types. Add traits/generics for a real boundary, testing
+  need, or reuse requirement. Avoid empty layers, universal managers,
+  speculative plugin frameworks, and a crate per module.
+- Test domain rules without UI, audio hardware, or Windows. UI presents state;
+  SQL, decoding, and file copying belong in their owning modules.
+- Keep APIs small and visibility intentional. Use distinct ID types, enums for
+  states, and `Option` for unknown values. Avoid unclear boolean parameters.
+- Make ownership and lifetimes explicit. Avoid global mutable state, unnecessary
+  `Arc<Mutex<_>>`, hidden initialization requirements, and clones that disguise
+  ownership problems.
+- Isolate necessary `unsafe` at native/FFI boundaries. Document the safety
+  invariant and review pointer lifetime, aliasing, and thread affinity.
+  Do not use unsafe for unproven performance gains.
+- Use `Result` for fallible operations. `unwrap`, `expect`, `panic!`, and
+  `unreachable!` must not replace handling of files, user input, SQL, or devices.
+  Tests and proven internal invariants may have narrowly justified exceptions.
+- Do not discard errors with `let _ =`, empty branches, or successful defaults.
+  Best-effort cleanup must still report failure at the owning error boundary.
+- Comments explain invariants and decisions, rather than restating code.
+  Temporary TODOs need concrete remaining work. Do not deliver core behavior
+  as a placeholder or `todo!()`.
 
-## Trådar, audio och resursgränser
+## Threads, audio, and resource limits
 
-- Ingen disk-I/O, SQL, hashing eller lång decode/analys på UI-tråden.
-- Ingen I/O, loggning, heapallokering eller blockerande synkronisering i
-  ljudcallbacken. Förbered audio utanför callbacken med begränsad buffering.
-- Arbetsköer, trådar, anslutningar och caches ska ha avsiktliga gränser.
-  Ange ägare, invalidation, cancellation och shutdown för bakgrundsarbete.
-- Prioritera användarinteraktion och uppspelning framför analys. Använd
-  jobb-ID/generation så att gamla svar inte uppdaterar nytt val eller ny sökning.
-- Rita bara synliga rader och uppdatera UI när det behövs. Undvik kontinuerlig
-  repaint, täta timers och fullskanning i vila.
-- Ladda inte bibliotekets ljud i RAM. Långa filer och stora batcher ska ha
-  begränsat minne. Caches behöver storleksgräns och mätbar nytta.
-- Rust eller en ny dependency är inte bevis på prestanda. Profilera verklig
-  kostnad och redovisa före/efter när en ändring påstås göra appen snabbare.
+- No disk I/O, SQL, hashing, or lengthy decoding/analysis on the UI thread.
+- No I/O, logging, heap allocation, or blocking synchronization in the audio
+  callback. Prepare audio outside the callback with bounded buffering.
+- Bound queues, threads, connections, and caches deliberately. Define ownership,
+  invalidation, cancellation, and shutdown for background work.
+- Prioritize interaction and playback over analysis. Use job IDs/generations so
+  stale responses cannot update a newer selection or query.
+- Render visible rows and repaint when needed. Avoid continuous redraw, tight
+  timers, and full scans while idle.
+- Do not load the library's audio into RAM. Long files and large batches require
+  bounded memory. Caches need size limits and measurable value.
+- Rust or a new dependency does not prove performance. Profile actual cost and
+  report before/after evidence when claiming an improvement.
 
-## Lagring, filer och fel
+## Storage, files, and errors
 
-- Validera alla yttre gränser: filer, metadata, sökfrågor, inställningar,
-  serialiserade projekt och native API-svar. Parametrisera SQL.
-- Använd versionsstyrda scheman och transaktioner för beständiga ändringar.
-  Bevara data vid misslyckad migrering; en osupporterad version får inte resetta DB.
-- Filidentitet, sökväg och innehållshash är olika begrepp. Bevara OS-sökvägar
-  utan förlust; visningstext får inte bli lokator för en filoperation.
-- Exportnamn ska hantera traversal, reserverade namn, krockar och mål som aliasar
-  källan. Beakta länkar/reparse points och race där det påverkar skrivgränsen.
-- Planera konflikter, använd unika temporärfiler och verifiera faktisk
-  publiceringssemantik. Kopiera originalbytes; ingen omkodning utan beställning.
-- Logga ett oväntat fel en gång där dess hantering ägs: operation, steg,
-  relevant ID, felkedja och utfall. Visa en begriplig åtgärd i UI.
-- Normal cancellation/validering är inte en felstack. Begränsa upprepade
-  diagnostikmeddelanden; ingen hot-path-loggning eller privata payloads.
-- Håll loggar och diagnostik lokala och begränsade. Delade rapporter ska inte
-  innehålla privata biblioteksnamn, absoluta personliga sökvägar eller hemligheter.
+- Validate external boundaries: files, metadata, search input, configuration,
+  serialized projects, and native responses. Parameterize SQL.
+- Use versioned schemas and transactions for durable changes. Preserve data on
+  migration failure; unsupported versions must not reset the database.
+- File identity, location, and content hash are different concepts. Preserve OS
+  paths without loss; display strings must not become file-operation locators.
+- Export names must handle traversal, reserved names, collisions, and targets
+  aliasing sources. Account for links/reparse points and relevant write races.
+- Plan conflicts, create unique temporary files, and verify actual publication
+  semantics. Copy original bytes; do not transcode without a request.
+- Log unexpected failure once at its handling boundary: operation, stage,
+  relevant ID, cause chain, and outcome. Present an actionable UI message.
+- Normal cancellation/validation does not require an error stack. Bound repeated
+  diagnostics; no hot-path logging or private payloads.
+- Keep logs and diagnostics local and bounded. Shared reports must not contain
+  private library names, personal absolute paths, or secrets.
 
-## UI och beroenden
+## UI and dependencies
 
-- Gör listor, flerval, tangentbordsfokus, playback och projektstatus tydliga.
-  Visa progress, saknade filer och misslyckat sparande utan att frysa gränssnittet.
-- Bevara användarens selection och relevanta vyinställningar genom uppdateringar.
-  Blanda inte intern drag-and-drop med verifierat stöd för externa mål.
-- Välj aktuella, stabila och underhållna verktyg efter behov. Kontrollera
-  version, plattformsstöd, licens, feature flags och faktisk integrationskostnad.
-- Lås toolchain och appens dependencygraf när Cargo skapas. Minimal feature-yta
-  och en liten dependencygraf är utgångspunkt; uppgradera inte allt i en bugfix.
-- Använd Context7 när tillgängligt för biblioteksspecifik dokumentation;
-  verifiera mot låsta versioner och officiell dokumentation eller källkod.
-  En docsbeskrivning är inte bevis på lokal runtimekompatibilitet.
-- Inför inte en async-runtime, tjänst, nätverkskrav eller ny UI-stack utan ett
-  konkret behov och ett dokumenterat beslut.
+- Make lists, multi-selection, keyboard focus, playback, and project state clear.
+  Show progress, missing sources, and save failures without freezing the UI.
+- Preserve selection and relevant view settings through updates. Internal
+  dragging is not proof of support for external applications.
+- Choose maintained, stable tools for concrete needs. Check versions, platform
+  support, licenses, feature flags, and actual integration cost.
+- Pin the toolchain and application dependency graph when Cargo is introduced.
+  Start with minimal features/dependencies; do not upgrade everything in a fix.
+- Use Context7 when available for library-specific documentation; verify against
+  pinned versions and official docs or source. Documentation is not proof of
+  local runtime compatibility.
+- Introduce an async runtime, service, network requirement, or new UI stack only
+  for a concrete need and a documented decision.
 
-## Verifiering och färdigdefinition
+## Verification and completion
 
-Välj de kontroller som bevisar det ändrade beteendet. Relevanta tester får köras
-mot disponibla fixtures inom uppgiften utan att fråga igen. För kodändringar ska
-formattering, relevanta tester och lint för berörda targets passera. Behåll
-verktygens exit codes; sista kommandots framgång får inte dölja ett tidigare fel.
+Choose checks that prove the changed behavior. Relevant tests with disposable
+fixtures can run within the task without asking again. Code changes require
+formatting, relevant tests, and lint for affected targets to pass. Preserve exit
+codes; the final command's success must not hide an earlier failure.
 
-När ett Cargo-projekt och lockfil finns är följande standardkommandon:
+Once a Cargo project and lockfile exist, standard commands are:
 
 ```powershell
 cargo fmt --all -- --check
@@ -149,46 +150,47 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-Anpassa testurval/featurekombinationer till verklig kod och dokumenterad CI.
-Kör inte dessa i ett dokumentationsrepo utan `Cargo.toml`. Bygg inte appen enbart
-för branch- eller textändringar, och återkör inte dyra kontroller utan ny anledning.
+Adapt test selection/features to actual code and documented CI. Do not run these
+in a documentation repository without `Cargo.toml`. Do not build for branch or
+text changes, or repeat expensive checks without a new reason.
 
-- Testa domänregler, söksemantik, lagring och migrering med små riktiga fixtures.
-- Audio/filer: formatvarianter, långa filer, seek, cancellation, saknad/ändrad
-  källa och felaktigt innehåll. Behåll provdata små och med känd rätt att använda.
-- Projekt/export: omstart, rollback, konflikter, partial failure och oförändrade
-  original. Testa att omindexering bevarar manuella användaruppgifter.
-- Samtidighet: stale svar, snabba val, stängning med aktiva jobb och kögränser.
-  Testa kontrollerad koordinering hellre än sköra godtyckliga sleeps.
-- Native/audio: verifiera verklig uppspelning och drag till Utforskaren. Mockar,
-  build och en bild av UI räcker inte som bevis för dessa beteenden.
-- Prestanda: följ scenarierna och rapporteringsformatet i prestandadokumentet.
-- Dokumentation: kontrollera faktainnehåll, lokala länkar och staged diff;
-  skriv inte implementationstester som bara speglar en låg-risk textändring.
+- Test domain rules, search semantics, persistence, and migrations with small,
+  genuine fixtures.
+- Audio/files: format variants, long files, seeking, cancellation, missing or
+  modified sources, and malformed data. Use small fixtures with known rights.
+- Projects/export: restart, rollback, conflicts, partial failures, and unchanged
+  originals. Verify reindexing preserves manually entered user data.
+- Concurrency: stale responses, rapid selection, shutdown during work, and queue
+  bounds. Prefer controlled coordination over arbitrary timing sleeps.
+- Native/audio: verify playback and dragging into Explorer on actual Windows.
+  Mocks, builds, and screenshots do not prove these interactions.
+- Performance: follow the scenarios and reporting format in the performance doc.
+- Documentation: check facts, local links, and staged changes. Do not write
+  implementation-mirroring tests for a low-impact text correction.
 
-Färdigt betyder: beställt beteende är implementerat eller dokumentationen
-levererad, relevanta kontroller har rätt utfall, fel-/avbrottsfallen är hanterade,
-nya ansvar och beslut är dokumenterade och en naturlig checkpoint är committad.
-Om runtimebevis saknas ska exakt återstående prov och begränsning redovisas.
-Påstå inte att tester, build, uppspelning eller prestanda verifierats utan bevis.
+Complete means the requested behavior is implemented or documentation delivered,
+relevant checks have the expected outcome, error/cancellation cases are handled,
+new responsibilities/decisions are documented, and a natural checkpoint is
+committed. If runtime proof is missing, name the exact remaining check and limit.
+Never claim tests, builds, playback, or performance passed without evidence.
 
-## Commits och handover
+## Commits and handover
 
-Skapa små Conventional Commits vid naturliga, verifierade checkpoints utan att
-vänta på ett separat kommando från Benjamin. Ett checkpoint ska vara begripligt
-och sammanhängande; samla inte en hel version i en commit och skapa inte
-konstgjorda commits per fil. Stagea explicita paths och granska staged diff.
-Bevara orelaterat arbete och historik. Detaljer finns i Git-konventionerna.
+Create small Conventional Commits at natural, verified checkpoints without
+waiting for a separate command. Each checkpoint must be coherent and meaningful;
+do not combine a whole version into one commit or manufacture a commit per file.
+Stage explicit paths and inspect the staged diff. Preserve unrelated work and
+history. See the Git conventions for details.
 
-Uppdatera `docs/STATUS.md` vid ett avslutat större delsteg eller innan en handover,
-som del av den relevanta committen. Ange faktiskt klart, bevis, öppna beslut,
-eventuella hinder och nästa konkreta steg. Använd datum och beskrivningar;
-undvik självrefererande commit-hashar och en extra statuscommit efter varje edit.
+Update `docs/STATUS.md` at a substantial completed step or before handover, as
+part of the relevant commit. Record what exists, evidence, open decisions,
+blockers, and the next concrete step. Use dates/descriptions; avoid
+self-referential commit hashes or a separate status commit after every edit.
 
-Slutrapporten ska kort ange resultat, relevanta filer, branch, nya commit-hashar
-med subject, verifiering och eventuell kvarvarande runtimekontroll. Ange vad
-Benjamin behöver göra endast när det faktiskt behövs.
+The final report should briefly state the result, relevant files, branch,
+new commit hashes and subjects, verification, and pending runtime checks.
+Tell Benjamin what to do only when an actual action is needed.
 
-AGENTS.md och projektdokumenten ska vara incheckade i Sift och hållas aktuella.
-Lägg generella regler här och detaljspecifikationer i länkade dokument. Låt inte
-filen växa till en upprepad chattlogg eller kopiera instruktioner från andra projekt.
+Track AGENTS.md and project documentation in Sift and keep them current.
+Place general rules here and detailed specifications in linked documents.
+Do not turn this file into a repeated chat log or copy unrelated project rules.

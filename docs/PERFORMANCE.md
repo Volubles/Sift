@@ -1,86 +1,85 @@
-# Prestanda och bevis
+# Performance and evidence
 
-## Status och föreslagna budgetar
+## Status and proposed budgets
 
-Inga appmätningar finns ännu. Siffrorna nedan är föreslagna prototypbudgetar,
-inte användarbekräftade SLA:er eller uppnådda resultat. De gör prioriteringen
-resurssnål mätbar. Ändra dem genom ett motiverat produktbeslut efter mätning;
-höj dem inte i tysthet för att få en regression att passera.
+No application measurements exist yet. The following are proposed prototype
+budgets, not user-confirmed SLAs or achieved results. They make efficiency
+measurable. Revise them through a reasoned product decision after measurement;
+do not silently raise them to make a regression pass.
 
-Referensscenario: Windows, lokal SSD, release-build, färdigindexerade 100 000
-metadataobjekt, begränsad resultatsida, ingen aktiv skanning eller uppspelning.
-Registrera faktisk hårdvara och innehåll; syntetisk metadata ersätter inte
-ljudfiler vid audio- eller skanningsmätning.
+Reference scenario: Windows, local SSD, release build, 100,000 indexed metadata
+records, a bounded result page, no scanning or playback. Record actual hardware
+and content. Synthetic metadata is not a substitute for real files in audio
+or scanning measurements.
 
-| Egenskap | Föreslaget mål | Definition |
+| Metric | Proposed target | Definition |
 | --- | --- | --- |
-| CPU i vila | Högst 0,5 % av hela maskinens CPU | Medel över 60 s efter stabilisering, alla Siftprocesser; ange logiska kärnor. |
-| Minne i vila | Högst 150 MiB privata processbytes | Samma scenario; working set, GPU-minne och mapped index redovisas separat. |
-| Varm start | Användbart bibliotek inom 1 s | Processstart till interaktiv lista; befintligt index, ingen återanalys. |
-| Textsökning | p95 högst 100 ms | Användarinmatning till synligt korrekt resultat; debounce och render räknas. |
-| Varm förhandslyssning | p95 högst 150 ms | Play/val till första ljud; redovisa cache, enhet och buffertstorlek. |
-| Scrollning | p95 CPU-framarbete inom 16,7 ms vid 60 Hz | Mät aktiv scrollning och synliga rader; rapportera även tappade frames. |
+| Idle CPU | At most 0.5% of total machine CPU | Mean over 60 s after stabilization, all Sift processes; record logical cores. |
+| Idle memory | At most 150 MiB private process bytes | Same scenario; report working set, GPU memory, and mapped indexes separately. |
+| Warm startup | Usable library within 1 s | Process start to interactive list; existing index, no reanalysis. |
+| Text search | p95 at most 100 ms | Input to correct visible results, including debounce and rendering. |
+| Warm preview | p95 at most 150 ms | Play/selection to first audible sound; state cache, device, buffer size. |
+| Scrolling | p95 CPU frame work within 16.7 ms at 60 Hz | Measure active scrolling and visible rows; also report dropped frames. |
 
-Ljudlatens kan kräva loopback/extern inspelning för verkligt bevis. Tiden till
-att ett block köas i CPAL är bara en intern delmätning. Ett användbart UI utan
-färdig bakgrundsmetadata kan vara en korrekt start; visa status tydligt.
+True audio latency may require loopback or external recording. Time until a
+block is queued to CPAL measures only part of the path. An interactive library
+before all background metadata is ready is valid when its state is clear.
 
-## Scenario som ska mätas
+## Measurement scenarios
 
-1. Tom app, vila, minimerad app och app med bibliotek utan aktivitet.
-2. 10 000 och 100 000 metadataobjekt; 1 000 000 som senare stresstest.
-3. Kall respektive varm start och kall/varm första förhandslyssning.
-4. Sökning, sortering och scrollning, inklusive snabb ändring av sökfråga.
-5. WAV/FLAC/MP3/AIFF: korta effekter, långa filer, olika kanaler och sample rates.
-6. Uppspelning och snabba val/seek under aktiv skanning/analys.
-7. Paus, cancellation, enhetsbortfall och nedstängning med jobb i kö.
-8. Projekt med många referenser och export av många eller stora filer.
-9. Upprepad öppna/stänga, byta projekt och omindexera för att hitta läckor.
+1. Empty app, idle app, minimized app, library loaded without activity.
+2. 10,000 and 100,000 metadata records; 1,000,000 as a later stress case.
+3. Cold/warm startup and cold/warm first preview.
+4. Search, sorting, scrolling, and rapid query changes.
+5. WAV/FLAC/MP3/AIFF: short effects, long tracks, channel/rate variants.
+6. Playback and rapid selection/seeking during scanning and analysis.
+7. Pause, cancellation, device loss, shutdown with queued work.
+8. Projects with many references and exports of many/large files.
+9. Repeated opening/closing, project switching, and reindexing to detect leaks.
 
-NAS/external disk är egna scenarier och ska inte blandas med SSD-resultat.
-Syntetiska fixtures ska beskrivas som sådana. Begär ett representativt
-bibliotek eller använd godkända provfiler; skanna inte privata mappar av vana.
+NAS/external disks are separate scenarios, not interchangeable with SSD results.
+Identify synthetic fixtures explicitly. Request a representative collection or
+use approved sample files; do not scan private folders by habit.
 
-## Mätmetod
+## Method
 
-- Använd samma releaseprofil, commit, maskin och energiinställningar vid jämförelse.
-- Ange OS, CPU, logiska kärnor, RAM, disk, ljudenhet, backend och sample rate.
-- Registrera filantal, totalstorlek, format/längdfördelning och indexstorlek.
-- Beskriv exakt vad kall/varm betyder; manipulera inte systemcache utan behov.
-- Mät latens i upprepade operationer och redovisa antal, median, p95 och max.
-- Mät CPU/RAM som tidsserie; en ensam Task Manager-bild är inte en baseline.
-- Rapportera peak-minne, disk-I/O, köstorlekar och audio-underruns utöver snitt.
-- Kontrollera att backend/UI-drivrutiner inte bara flyttar kostnaden till GPU.
-- Spara reproducerbara kommandon och metod. Privata rådata hör i ignorerad
-  `benchmarks/results/`; en sanerad sammanfattning kan checkas in.
+- Compare the same release profile, commits, machine, and power configuration.
+- Record OS, CPU, logical cores, RAM, disk, audio device, backend, and sample rate.
+- Record file count, total bytes, format/duration distribution, and index size.
+- Define cold/warm precisely; do not manipulate system caches without a need.
+- Repeat latency operations and report count, median, p95, and maximum.
+- Measure CPU/RAM over time; one Task Manager screenshot is not a baseline.
+- Report peak memory, disk I/O, queue sizes, and underruns alongside averages.
+- Check whether renderer/drivers move work into GPU rather than eliminating it.
+- Preserve reproducible commands and methods. Private raw data belongs in
+  ignored `benchmarks/results/`; a sanitized summary can be committed.
 
-Genomströmning vid skanning ska delas i enumeration, metadata, decode,
-waveform, hashing och analys. Filantal per sekund utan innehållsbeskrivning
-är inte jämförbart. CPU-budget för bakgrundsarbete ska kunna begränsas och
-uppspelning/UI ska prioriteras. Vila och full analys har olika budgetar.
+Split scanning throughput into enumeration, metadata, decoding, waveforms,
+hashing, and analysis. Files per second without content details are not
+comparable. Bound background CPU and prioritize interaction/playback.
+Idle operation and full analysis have different resource budgets.
 
-## Förhindra strukturell resursförbrukning
+## Prevent structural waste
 
-Inga obegränsade köer eller caches. Ingen helbiblioteksdecode i RAM. Inget
-kontinuerligt repaint eller tätt pollande när appen saknar synliga ändringar.
-Ladda bara relevanta metadata/resultat och rita synliga rader. Bakgrundsjobb
-ska kunna pausa, avbrytas och lämna systemet i ett definierat tillstånd.
+No unbounded queues/caches, whole-library decoding into RAM, continuous repaint,
+or tight polling without visible changes. Load relevant data, render visible
+rows, and allow background work to pause, cancel, and leave defined state.
 
-Profilera en verifierad flaskhals före optimering. Behåll en enkel baseline
-som jämförelse. Mikromätningar av en algoritm bevisar inte lägre appminne,
-bättre söklatens eller störningsfri uppspelning. En `perf`-commit ska redovisa
-relevanta före/efter-data och bevara beteendet.
+Profile a demonstrated bottleneck before optimization and preserve a simple
+baseline. An algorithm microbenchmark does not prove lower application memory,
+faster searches, or uninterrupted playback. A `perf` commit needs relevant
+before/after evidence and preserved behavior.
 
-## Underlag för en benchmarkrapport
+## Benchmark report template
 
 ```text
-Commit / buildprofil / datum:
-Maskin / OS / ljudenhet:
-Bibliotek / scenario / cacheläge:
-Metod / kommandon / antal repetitioner:
-CPU / privata bytes / working set / GPU / peak:
-Latens median / p95 / max:
-Disk-I/O / underruns / köer:
-Jämförelse med baseline:
-Begränsningar / rådataplats / slutsats:
+Commit / build profile / date:
+Machine / OS / audio device:
+Library / scenario / cache state:
+Method / commands / repetitions:
+CPU / private bytes / working set / GPU / peak:
+Latency median / p95 / maximum:
+Disk I/O / underruns / queues:
+Baseline comparison:
+Limitations / raw data location / conclusion:
 ```

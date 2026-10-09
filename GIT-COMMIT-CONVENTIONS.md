@@ -1,20 +1,20 @@
-# Git och checkpoint-commits
+# Git and checkpoint commits
 
-## Princip
+## Principle
 
-Benjamin vill ha täta, naturliga commits som visar hur projektet byggs steg för
-steg. Committera när en utvecklare rimligen vill spara ett fungerande checkpoint:
-en begriplig och verifierad del av arbetet. Vänta inte tills en hel version är
-färdig och begär inte ett separat godkännande för varje lokal commit.
+Benjamin wants frequent, natural commits that show the project developing step
+by step. Commit where a developer would reasonably save a working checkpoint:
+a coherent, understandable, verified part of the work. Do not wait for a whole
+version to be finished or request separate approval for each local commit.
 
-En commit ska ha ett tydligt syfte och kunna förklaras utan chattens historia.
-Implementation, nödvändiga tester och relevant dokumentation hör ofta ihop.
-Storleken bestäms av sammanhanget, inte ett godtyckligt fil- eller radantal.
-Skapa inte commits med en trasig app eller konstgjorda commits per enskild fil.
+A commit needs one clear purpose and must make sense without the conversation.
+Implementation, necessary tests, and related documentation often belong together.
+Size follows the actual boundary, not an arbitrary file or line count.
+Do not commit broken intermediate states or manufacture commits per file.
 
 ## Format
 
-Följ [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
+Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
 
 ```text
 <type>(<optional scope>): <short English description>
@@ -24,30 +24,30 @@ Följ [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0
 <optional breaking-change or issue footer>
 ```
 
-Använd lowercase type/scope och ett kort, konkret engelskt subject. Scope ska
-beskriva berört ansvar, exempelvis `library`, `search`, `audio`, `projects`,
-`export`, `ui`, `storage` eller `repo`. Scope är valfritt där det inte hjälper.
+Use lowercase types/scopes and a short, concrete English subject. Scope identifies
+the responsibility, such as `library`, `search`, `audio`, `projects`, `export`,
+`ui`, `storage`, or `repo`. Omit it when it adds no useful information.
 
-| Type | Användning |
+| Type | Meaning |
 | --- | --- |
-| `feat` | Ny användbar funktion. |
-| `fix` | Korrigering av felaktigt beteende. |
-| `perf` | Beteendebevarande förbättring med relevant prestandabevis. |
-| `refactor` | Ändrad kodstruktur med bevarat beteende. |
-| `test` | Meningsfull verifiering utan ändrad produktfunktion. |
-| `docs` | Dokumentation och specifikation. |
-| `build` / `ci` | Byggkedja respektive automatiserade kontroller. |
-| `chore` | Repo-/verktygsunderhåll. |
-| `style` | Enbart formattering, ingen beteendeändring. |
-| `revert` | Avsiktligt återtagande av tidigare ändring. |
+| `feat` | New usable functionality. |
+| `fix` | Correction of incorrect behavior. |
+| `perf` | Behavior-preserving improvement with relevant performance evidence. |
+| `refactor` | Structural change preserving behavior. |
+| `test` | Meaningful verification without changing product behavior. |
+| `docs` | Documentation and specifications. |
+| `build` / `ci` | Build system / automated checks. |
+| `chore` | Repository or tooling maintenance. |
+| `style` | Formatting only, without behavior changes. |
+| `revert` | Intentional reversal of an earlier change. |
 
-Ange en verklig inkompatibel ändring med `!` och/eller en `BREAKING CHANGE:`
-footer. Beskriv migreringskonsekvensen; en databasändring är inte automatiskt
-breaking om befintliga data migreras säkert. En commit är inte en release.
+Mark actual incompatible changes with `!` and/or a `BREAKING CHANGE:` footer.
+Explain migration implications. A schema change is not automatically breaking
+if existing data migrates safely. A commit is not a release.
 
-## Bra checkpoints
+## Good checkpoints
 
-Exempel för en större uppgift; dela bara där gränsen faktiskt är användbar:
+Examples for a substantial task; split only where the boundary is meaningful:
 
 ```text
 feat(library): persist registered sample roots
@@ -59,43 +59,42 @@ feat(projects): save sample references with project ordering
 feat(export): copy selected samples without replacing existing files
 ```
 
-Planera naturliga checkpoints före en större implementation, men anpassa dem
-efter vad som lärs under arbetet. En ny persistencegrund kan vara en självständig
-checkpoint även innan UI använder den om dess kontrakt och tester är kompletta.
-En ändring som kräver sin anroparuppdatering hör ihop med den uppdateringen.
+Plan natural checkpoints before substantial implementation and adapt as evidence
+changes. A persistence foundation can stand alone before UI uses it when its
+contract and tests are complete. A change that requires caller updates belongs
+with those updates.
 
-## Före varje commit
+## Before every commit
 
-1. Kontrollera branch och arbetsyta; skilj egna ändringar från befintliga.
-2. Kör relevanta kontroller och granska det nya beteendet.
-3. Stagea explicita paths eller granskade hunks. Använd inte blind `git add .`.
-4. Läs `git diff --cached`, kontrollera `git diff --cached --check` och
-   `git diff --cached --name-only`. Inga privata data eller orelaterade filer.
-5. Skapa committen och kontrollera vad den innehåller. Rapportera hash + subject.
+1. Check the branch and worktree; distinguish your changes from existing work.
+2. Run appropriate checks and inspect the resulting behavior.
+3. Stage explicit paths or reviewed hunks. Do not use blind `git add .`.
+4. Read `git diff --cached`, check `git diff --cached --check` and
+   `git diff --cached --name-only`. Exclude private data and unrelated files.
+5. Commit, confirm its contents, and report the hash and subject.
 
-Om något är oklart: granska och lösa det före commit. En statusuppdatering ska
-följa relevant checkpoint, inte skapa en oändlig kedja av housekeeping-commits.
-Koppla inte på dolda hooks/installationssteg som användaren behöver konfigurera
-manuellt innan en vanlig commit fungerar.
+Resolve uncertainties before committing. Status updates belong in their relevant
+checkpoint, not an endless chain of housekeeping commits. Do not add hidden hooks
+or installation steps requiring manual setup before a normal commit works.
 
-## Brancher och historik
+## Branches and history
 
-- `main` är projektets lokala bas. Kontrollera status innan en ny branch skapas.
-- Större oberoende arbete använder normalt `codex/<short-purpose>` från aktuell
-  avsedd bas. Återanvänd en relevant pågående branch. Små sammanhängande ändringar
-  behöver inte skapa en ny branch för varje checkpoint.
-- Om en remote senare finns: kontrollera/fetcha den avsedda basen innan en
-  oberoende branch. Ett oväntat divergerat läge ska utredas före integration.
-- Varken push, PR eller release är automatiskt godkänd av en lokal commit.
-- Använd inte reset, clean, rebase, force-push, stash eller amend för att dölja
-  eller flytta orelaterat/shared arbete. Vanliga nya commits är standard.
-- Förfalska inte author, datum, verifiering eller historik. Behåll fungerande
-  checkpoints. Rätta en publicerad historik med en ny commit.
+- `main` is the local baseline. Check the worktree before creating a branch.
+- Substantial independent work normally uses `codex/<short-purpose>` from the
+  intended current base. Reuse a suitable active branch. Related small changes
+  do not require a new branch per checkpoint.
+- If a remote is introduced, inspect/fetch the intended base before creating an
+  independent branch. Investigate unexpected divergence before integration.
+- A local commit does not automatically authorize push, a PR, or a release.
+- Do not use reset, clean, rebase, force-push, stash, or amend to hide or relocate
+  unrelated/shared work. New commits are the default.
+- Do not fabricate authors, dates, verification, or history. Preserve useful
+  checkpoints and correct published history with a new commit.
 
-## Vad får checkas in?
+## What belongs in Git?
 
-Kod, appens `Cargo.lock`, toolchain/buildkonfiguration, små rättighetsklara
-testfixtures, projektdokumentation och denna Sift-guide hör till repot.
-Privata ljudbibliotek, exporter, DB, logs, råmätningar, credentials, IDE-state och
-build output ska förbli utanför Git. `.gitignore` är ett stöd; staged diff är
-fortfarande den avgörande kontrollen.
+Code, the application's `Cargo.lock`, toolchain/build configuration, small
+rights-cleared test fixtures, project documentation, and this Sift guide.
+Private libraries, exports, databases, logs, raw measurements, credentials,
+IDE state, and build output stay outside Git. Ignore rules help; the staged diff
+is still the final check.

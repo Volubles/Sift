@@ -1,45 +1,48 @@
-# Aktuell status och nästa steg
+# Current status and next steps
 
-Senast uppdaterad: 2026-10-09. Detta dokument beskriver faktiska leveranser;
-produkt- och arkitekturdokumenten beskriver vad appen ska bli.
+Last updated: 2026-10-09. This document describes actual deliveries; product
+and architecture documents describe the intended application.
 
-## Klart
+## Completed
 
-- Lokalt Git-repo på `main`, repo-hygien och Conventional Commit-arbetsflöde.
-- AGENTS.md med beständiga kvalitetskrav och instruktioner för att återuppta arbetet.
-- Produktkrav för bibliotek, sökning, förhandslyssning, projekt och kopiering.
-- Teknisk riktning, ansvar, trådar, lagring och native integrationsgränser.
-- Föreslagna prestandabudgetar och reproducerbart mätupplägg.
+- Local Git repository on `main`, repository hygiene, Conventional Commit workflow.
+- AGENTS.md with durable quality requirements and instructions for resuming work.
+- Requirements for libraries, search, preview, projects, and copying.
+- Technical direction, responsibilities, threads, storage, native boundaries.
+- Proposed performance budgets and a reproducible measurement plan.
+- Repository documentation translated to English; English is required for
+  product UI and all user-visible content. Conversation remains Swedish.
 
-Ingen `Cargo.toml`, Rustimplementation, byggd app eller CI finns ännu.
-Ingen remote, publicering eller vald distributionslicens finns.
+No `Cargo.toml`, Rust implementation, built application, or CI exists yet.
+No remote, publishing, or distribution license has been selected.
 
-## Beslut och öppna val
+## Decisions and open choices
 
-- Beslutat: Rust, resurssnålt lokalt kärnflöde, projekt som referenser,
-  kopiering vid extern drag-and-drop och små checkpoint-commits.
-- Prototypriktning: Windows först, egui/eframe, SQLite/FTS5, Symphonia, CPAL
-  och en begränsad Windowsadapter. Verifiera före definitiva biblioteksversioner.
-- Öppet: UI-formgivning/språk, exakt formatmatris, enhets/backendstöd,
-  godkänt provbibliotek, slutliga prestandabudgetar och distribution/licens.
-- Likhetssökning är senare och valfri. AI-kategorisering ingår inte i grundplanen.
+- Agreed: Rust, efficient local workflow, projects as references, copy-only
+  outgoing drag-and-drop, English artifacts, and small checkpoint commits.
+- Initial prototype direction: Windows first, egui/eframe, SQLite/FTS5,
+  Symphonia, CPAL, and a limited Windows adapter. Stack research is in progress;
+  validate candidates before selecting dependency versions.
+- Open: visual design, exact format matrix, device/backend support, approved
+  sample collection, final performance budgets, and distribution/license.
+- Similarity search is later and optional; AI categorization is outside the core.
 
-## Verifiering för detta steg
+## Verification
 
-Arbetet är repo- och dokumentationsgrund. UTF-8/radslut för tio filer, elva
-lokala dokumentlänkar, femton Git-ignorefall och text-/binärattribut har
-kontrollerats utan fel. Staged diffs granskas vid respektive checkpoint.
-Git-historiken är källan för aktuella commit-hashar och branch.
+The repository foundation was checked for UTF-8/line endings, local links,
+ignore behavior, and text/binary attributes. Review staged diffs at each
+checkpoint. Git history is the source of current hashes and branch.
 
-Ingen appkompilering, uppspelning, native drag-and-drop eller prestandamätning
-har utförts. Förväxla inte en förberedd specifikation med fungerande runtime.
+No application compilation, playback, native dragging, or performance
+measurement has been performed. Specifications are not runtime proof.
 
-## Nästa föreslagna uppgift
+## Next proposed task
 
-När implementation beställs: skapa ett minimalt Cargo-projekt med kompatibel
-låst stabil toolchain. Prova stor virtualiserad fillista, waveform,
-förhandslyssning och native drag till Utforskaren. Börja med disponibla fixtures,
-håll ändringar i naturliga checkpoints och mät vila/latens/minne.
+Finish the stack comparison before implementation. Once implementation is
+requested, create a minimal Cargo project with a compatible pinned stable
+toolchain. Prove a large virtual list, waveform, preview, and native dragging
+into Explorer. Use disposable fixtures, natural checkpoints, and measurements
+of idle resources, latency, and memory.
 
-Det första stora tekniska valet ska avgöras av den prototypen. Börja inte med
-hela biblioteksanalysen, AI eller ett stort ramverk före detta bevis.
+Choose major technical details from that evidence before introducing a full
+analysis pipeline, AI, or a large application framework.
