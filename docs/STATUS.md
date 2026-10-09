@@ -28,7 +28,7 @@ Playback and waveforms are now implemented with a bounded audio worker and
 derived waveform cache. Single-source copy-only native dragging is integrated
 on Windows. Projects, tags, multi-selection, and application-managed export are
 not implemented yet. No CI
-configuration exists yet. Active implementation branch: `codex/library-prototype`;
+configuration exists yet. Active implementation branch: `prot/library-prototype`;
 check Git before assuming a branch in a future session.
 No remote, publishing, or distribution license has been selected.
 
