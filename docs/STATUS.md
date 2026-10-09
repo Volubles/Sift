@@ -89,9 +89,24 @@ feature and 23 headless tests, plus separate Shell integration and seven adapter
 only checks; formatting and Clippy pass. The release native window capture was
 visually checked. See [native drag checkpoint](DRAG-AND-DROP.md).
 
-Manual Sift-to-Explorer mouse gestures, repeated drops, modifier keys, conflicts,
-and playback during dragging still require verification. Shell copying and a
-simulated egui gesture are separate evidence and do not prove that full flow.
+The first manual gesture stayed in the busy message without native cursor
+feedback. Escape did not finish it while other controls remained usable. That
+attempt exposed the original worker's unrelated input queue; isolated Shell
+copying and a simulated egui gesture had not proved the complete native flow.
+
+The repair keeps filesystem preparation on its bounded worker and posts OLE
+startup to a private message-only HWND on the Sift window's input thread, after
+the current egui/winit callback returns. Native ownership is thread-local; job
+cancellation, late release, final result delivery, and busy-state reset are
+explicit. Regression tests include actual owner-queue delivery with cancellation
+before the queued native start. The repaired build passes 37 default-feature
+tests, ten adapter-only tests, Shell copying, formatting, and Clippy. The default
+release binary is rebuilt and its native window smoke check passes.
+
+The Windows automation helper failed to initialize (OS error 3), so repaired
+Sift-to-Explorer physical mouse gestures, repeated drops, modifiers, conflicts,
+and playback during dragging still need runtime verification. Do not claim
+that full flow from the queue/Shell tests alone.
 
 The integrated drag build's 60-second resource observation recorded about 82 MiB
 private memory and no measurable CPU-time increase. Input events were recorded;

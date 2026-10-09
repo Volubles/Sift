@@ -18,8 +18,8 @@ The desktop starts dragging from a library row or the selected sound's
 folder, and release. Escape cancels. Clicks continue to select sounds; secondary
 button dragging does not start this operation. Busy, cancellation, rejection,
 source failures, and handoff have visible states. After the result, egui clears
-the drag ID and pointer state because OLE receives the final mouse release on
-its own thread. A deterministic interaction test covers click/drag separation
+the drag ID and pointer state because OLE consumes the final release in its
+modal loop. A deterministic interaction test covers click/drag separation
 and reusing the row after that reset.
 
 The adapter is available through the `native-drag` feature, which desktop enables
@@ -29,27 +29,39 @@ support yet.
 
 ## Threads, bounds, and native safety
 
-- One dedicated drag worker; one request and one result slot. A second request
-  is refused until the first outcome is consumed. Idle workers block.
+- One dedicated preparation worker; one request and one preparation result slot.
+  A second request is refused until the first final outcome is consumed. Idle
+  workers block. Only file validation and UTF-16 payload preparation run there.
 - At most 128 paths, 32,767 UTF-16 units per path, and 1 MiB of file-reference
   payload. Only path references are transferred; audio is not loaded into RAM.
 - Source existence, regular-file type, and reparse/link checks happen on the
   worker. Validation is a snapshot: a third-party target opens the path later.
-- The UI relinquishes mouse capture; OLE takes its own capture on the worker.
-  A late request after left-button release is cancelled. Escape cancels the
-  native gesture. Shutdown sets a cancellation flag, posts a message only to
-  the owned worker to wake its modal loop, disconnects queues, and joins it.
-- Each transfer initializes an STA with `OleInitialize`. COM objects stay on
-  that thread and are released before the matching `OleUninitialize`.
+- A private message-only HWND belongs to the Sift window's input thread. Posting
+  its start message defers the modal OLE call until the current egui/winit
+  callback has returned. Native objects stay on that thread; Rust `Rc` prevents
+  moving the host/coordinator across threads. No input queues are attached and
+  no mouse/keyboard input is injected into other apps.
+- At native start the UI relinquishes capture and OLE takes its own capture on
+  the same input thread. Late starts after left-button release or while Escape
+  is pressed are cancelled. Preparation supports Escape, mouse release, and
+  **Cancel file drag**; native OLE handles Escape during the actual gesture.
+- Shutdown cancels the pending job, disconnects queues, joins preparation,
+  clears the HWND callback pointer, and destroys only the owned message window.
+  A callback retains its thread-local state through nested events. Final native
+  outcomes have one queue slot, wake the UI, and clear the busy state on receipt.
+- Each native transfer balances `OleInitialize`/`OleUninitialize` on the input
+  thread. Windows owns the modal gesture and pumps native messages; background
+  decoding/indexing continue, though view redraw timing remains unqualified.
 - Each `GetData` creates independent movable `HGLOBAL` storage. A local guard
   frees unpublished allocations; the receiving target owns successful media
   and releases them through `ReleaseStgMedium`.
 
 `windows` and `windows-core` are pinned to 0.62.2 (MIT OR Apache-2.0), already
 present in the previous dependency graph. Enabled Win32 APIs cover COM/OLE,
-global memory, file references, mouse capture, and the worker message queue.
+global memory, file references, mouse capture, and the owned UI message window.
 There is no new framework or runtime. `unsafe_code` is denied throughout Sift
-and allowed only in `src/platform/windows_drag.rs`, including its native tests;
+and allowed only in `src/platform/windows_drag.rs` and its native host submodule,
+including their native tests;
 `unsafe_op_in_unsafe_fn` remains denied. Safety comments describe pointer and
 ownership contracts at the boundary. COM method inputs are validated before use.
 
@@ -96,20 +108,44 @@ destination names, same-folder drops, missing sources, and playback while
 dragging. Other DAWs/applications, network shares, denied permissions, full disks,
 and batch failure outcomes require their own runtime evidence.
 
-The integrated desktop passes 34 default-feature tests, 23 CLI/core tests with
-default features disabled, formatting, and warning-free Clippy for both those
-configurations. Seven adapter tests also pass with only `native-drag` enabled.
+The repaired desktop passes 37 default-feature tests, formatting, and warning-
+free Clippy. The earlier CLI/core checkpoint passed 23 tests with default
+features disabled. Ten adapter tests pass with only `native-drag` enabled.
 The explicit Shell target test above passes separately. The default test command
 intentionally skips that Shell integration test and the existing real-audio-device
 test. A release build and native desktop capture with the new drag control pass;
 the capture was visually inspected. These checks do not establish audible output
 or a successful interactive Explorer gesture.
 
-The integrated release resource observation used a 100,000-row synthetic catalog
+Before the input-thread repair, the release observation used a 100,000-row synthetic catalog
 for 60 seconds and recorded about 82 MiB private memory with no measurable
 process CPU-time increase. Exit diagnostics recorded input activity, so this is
 not a controlled idle claim. See [resource baseline](BASELINE.md) for the method,
 raw-record context, and unmeasured active-drag/playback scenarios.
+
+## Input-thread repair
+
+The original interactive attempt on Windows stayed in "Dragging a copy" without
+native feedback, and Escape did not finish it while other Sift controls remained
+usable. Native file-data/Shell tests had not exercised that gesture. The original
+implementation ran OLE on an unrelated background input queue.
+
+The repair keeps filesystem preparation on its worker and posts native startup
+to a private HWND on the creator's UI/input thread. It also avoids calling a
+modal message loop while egui or winit's event handler is borrowed: the pinned
+winit Windows runner can immediately dispatch `RedrawRequested` during nested
+messages. A native HWND test verifies deferred delivery on the owning thread,
+cancellation after startup is queued, final delivery, cleared busy state, and
+unchanged sources. Additional regressions cover off-thread preparation, caller-
+thread dispatch, cancellation before a late start, retry, and unread shutdown.
+
+The Windows automation helper could not start (`failed to write kernel assets`,
+OS error 3), so the repaired physical Sift-to-Explorer gesture is not yet
+automatically verified. The default release binary was rebuilt and the native
+window smoke check passes. Manual copy, repeated drag, Escape, and modifiers
+remain required; the source UI should now show native copy cursor feedback
+when a target accepts the offer. A custom floating file thumbnail is not
+implemented.
 
 ## Primary references
 

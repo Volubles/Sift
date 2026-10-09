@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU32, Ordering},
+    atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
 };
 use std::thread::{self, JoinHandle};
@@ -33,6 +33,8 @@ pub enum DragError {
     Busy,
     #[error("The file drag worker is unavailable; reopen Sift and try again")]
     Disconnected,
+    #[error("The native file drag must run on the thread that owns the Sift window")]
+    WrongThread,
     #[error("External file dragging is currently supported only on Windows")]
     Unsupported,
     #[error("Windows file transfer failed: {0}")]
@@ -48,6 +50,22 @@ pub enum DragOutcome {
 }
 
 struct Sources(Vec<PathBuf>);
+
+struct Request {
+    sources: Sources,
+    cancelled: Arc<AtomicBool>,
+}
+
+enum Prepared {
+    Files(Vec<u8>),
+    Cancelled,
+}
+
+enum Presentation {
+    #[cfg(windows)]
+    Deferred,
+    Complete(DragOutcome),
+}
 
 impl Sources {
     fn new(paths: Vec<PathBuf>) -> Result<Self, DragError> {
@@ -83,12 +101,15 @@ impl Sources {
 }
 
 pub struct DragWorker {
-    requests: Option<SyncSender<Sources>>,
-    results: Option<Receiver<Result<DragOutcome, DragError>>>,
-    shutdown: Arc<AtomicBool>,
-    native_thread: Arc<AtomicU32>,
+    requests: Option<SyncSender<Request>>,
+    results: Option<Receiver<Result<Prepared, DragError>>>,
+    pending: Option<Arc<AtomicBool>>,
+    owner: thread::ThreadId,
     thread: Option<JoinHandle<()>>,
-    busy: bool,
+    #[cfg(windows)]
+    native_started: bool,
+    #[cfg(windows)]
+    native: Option<windows_drag::DragHost>,
 }
 
 impl DragWorker {
@@ -96,82 +117,91 @@ impl DragWorker {
         cfg!(windows)
     }
 
-    pub fn start(wake: impl Fn() + Send + 'static) -> std::io::Result<Self> {
-        Self::start_with(wake, |sources, shutdown| {
+    pub fn start(wake: impl Fn() + Send + Sync + 'static) -> std::io::Result<Self> {
+        Self::start_with(wake, |sources, _cancelled| {
             #[cfg(windows)]
             {
-                windows_drag::drag(sources, shutdown)
+                windows_drag::drop_bytes(sources)
             }
             #[cfg(not(windows))]
             {
-                let _unused = (sources, shutdown);
+                let _unused = sources;
                 Err(DragError::Unsupported)
             }
         })
     }
 
     fn start_with(
-        wake: impl Fn() + Send + 'static,
-        transfer: impl Fn(&Sources, Arc<AtomicBool>) -> Result<DragOutcome, DragError> + Send + 'static,
+        wake: impl Fn() + Send + Sync + 'static,
+        prepare: impl Fn(&Sources, Arc<AtomicBool>) -> Result<Vec<u8>, DragError> + Send + 'static,
     ) -> std::io::Result<Self> {
-        let (requests, jobs) = mpsc::sync_channel::<Sources>(1);
+        let (requests, jobs) = mpsc::sync_channel::<Request>(1);
         let (sender, results) = mpsc::sync_channel(1);
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let stop = shutdown.clone();
-        let native_thread = Arc::new(AtomicU32::new(0));
-        let worker_id = native_thread.clone();
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        #[cfg(windows)]
+        let native = windows_drag::DragHost::new(wake.clone())
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
         let thread = thread::Builder::new()
-            .name("sift-file-drag".into())
+            .name("sift-drag-prepare".into())
             .spawn(move || {
-                #[cfg(windows)]
-                worker_id.store(windows_drag::prepare_thread(), Ordering::Release);
-                while let Ok(sources) = jobs.recv() {
-                    let result = sources.validate(&stop).and_then(|valid| {
+                while let Ok(Request { sources, cancelled }) = jobs.recv() {
+                    let result = sources.validate(&cancelled).and_then(|valid| {
                         if valid {
-                            transfer(&sources, stop.clone())
+                            prepare(&sources, cancelled).map(Prepared::Files)
                         } else {
-                            Ok(DragOutcome::Cancelled)
+                            Ok(Prepared::Cancelled)
                         }
                     });
                     if sender.send(result).is_err() {
                         break;
                     }
                     wake();
-                    if stop.load(Ordering::Acquire) {
-                        break;
-                    }
                 }
-                worker_id.store(0, Ordering::Release);
             })?;
         Ok(Self {
             requests: Some(requests),
             results: Some(results),
-            shutdown,
-            native_thread,
+            pending: None,
+            owner: thread::current().id(),
             thread: Some(thread),
-            busy: false,
+            #[cfg(windows)]
+            native_started: false,
+            #[cfg(windows)]
+            native: Some(native),
         })
     }
 
     pub fn busy(&self) -> bool {
-        self.busy
+        self.pending.is_some()
+    }
+
+    pub fn native_active(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.native.as_ref().is_some_and(|host| host.active())
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 
     pub fn request(&mut self, paths: Vec<PathBuf>) -> Result<(), DragError> {
-        if self.busy {
+        if self.busy() {
             return Err(DragError::Busy);
         }
         let sources = Sources::new(paths)?;
-        #[cfg(windows)]
-        windows_drag::release_pointer_capture()?;
+        let cancelled = Arc::new(AtomicBool::new(false));
         match self
             .requests
             .as_ref()
             .ok_or(DragError::Disconnected)?
-            .try_send(sources)
-        {
+            .try_send(Request {
+                sources,
+                cancelled: cancelled.clone(),
+            }) {
             Ok(()) => {
-                self.busy = true;
+                self.pending = Some(cancelled);
                 Ok(())
             }
             Err(TrySendError::Full(_)) => Err(DragError::Busy),
@@ -180,30 +210,77 @@ impl DragWorker {
     }
 
     pub fn poll(&mut self) -> Option<Result<DragOutcome, DragError>> {
-        let result = match self.results.as_ref()?.try_recv() {
+        #[cfg(windows)]
+        {
+            if self.native_started {
+                let result = self.native.as_ref()?.poll()?;
+                self.pending = None;
+                self.native_started = false;
+                return Some(result);
+            }
+            let host = self.native.take()?;
+            let result = self.poll_with(|bytes, cancelled| {
+                host.queue(bytes, cancelled)?;
+                Ok(Presentation::Deferred)
+            });
+            self.native = Some(host);
+            result
+        }
+        #[cfg(not(windows))]
+        {
+            self.poll_with(|_, _| Err(DragError::Unsupported))
+        }
+    }
+
+    pub fn cancel(&self) {
+        if let Some(cancelled) = &self.pending {
+            cancelled.store(true, Ordering::Release);
+        }
+    }
+
+    fn poll_with(
+        &mut self,
+        present: impl FnOnce(Vec<u8>, Arc<AtomicBool>) -> Result<Presentation, DragError>,
+    ) -> Option<Result<DragOutcome, DragError>> {
+        let cancelled = self.pending.as_ref()?.clone();
+        let prepared = match self.results.as_ref()?.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return None,
-            Err(mpsc::TryRecvError::Disconnected) if self.busy => Err(DragError::Disconnected),
-            Err(mpsc::TryRecvError::Disconnected) => return None,
+            Err(mpsc::TryRecvError::Disconnected) => Err(DragError::Disconnected),
         };
-        self.busy = false;
-        Some(result)
+        let result = if cancelled.load(Ordering::Acquire) {
+            Ok(Presentation::Complete(DragOutcome::Cancelled))
+        } else if thread::current().id() != self.owner {
+            Err(DragError::WrongThread)
+        } else {
+            prepared.and_then(|prepared| match prepared {
+                // The modal native gesture must use the window's input queue.
+                // No filesystem work or COM objects cross back from the worker.
+                Prepared::Files(bytes) => present(bytes, cancelled),
+                Prepared::Cancelled => Ok(Presentation::Complete(DragOutcome::Cancelled)),
+            })
+        };
+        match result {
+            #[cfg(windows)]
+            Ok(Presentation::Deferred) => {
+                self.native_started = true;
+                None
+            }
+            Ok(Presentation::Complete(outcome)) => {
+                self.pending = None;
+                Some(Ok(outcome))
+            }
+            Err(error) => {
+                self.pending = None;
+                Some(Err(error))
+            }
+        }
     }
 }
 
 impl Drop for DragWorker {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
-        #[cfg(windows)]
-        if self
-            .thread
-            .as_ref()
-            .is_some_and(|thread| !thread.is_finished())
-        {
-            windows_drag::wake_cancellation(self.native_thread.load(Ordering::Acquire));
-        }
-        #[cfg(not(windows))]
-        let _unused = &self.native_thread;
+        self.cancel();
         self.requests.take();
         self.results.take();
         if let Some(thread) = self.thread.take()
@@ -218,6 +295,100 @@ impl Drop for DragWorker {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn preparation_runs_off_thread_but_native_gesture_runs_on_the_window_thread() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.wav");
+        std::fs::write(&path, b"unchanged source").unwrap();
+        let owner = thread::current().id();
+        let (prepared_by, preparation_thread) = mpsc::sync_channel(1);
+        let (wake, ready) = mpsc::sync_channel(1);
+        let mut worker = DragWorker::start_with(
+            move || wake.send(()).unwrap(),
+            move |_, _| {
+                prepared_by.send(thread::current().id()).unwrap();
+                Ok(vec![1, 2, 3])
+            },
+        )
+        .unwrap();
+        worker.request(vec![path.clone()]).unwrap();
+        assert_ne!(
+            preparation_thread
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap(),
+            owner
+        );
+        ready.recv_timeout(Duration::from_secs(3)).unwrap();
+        let outcome = worker
+            .poll_with(|bytes, cancelled| {
+                assert_eq!(thread::current().id(), owner);
+                assert_eq!(bytes, [1, 2, 3]);
+                assert!(!cancelled.load(Ordering::Acquire));
+                Ok(Presentation::Complete(DragOutcome::Accepted))
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome, DragOutcome::Accepted);
+        assert!(!worker.busy());
+        assert_eq!(std::fs::read(path).unwrap(), b"unchanged source");
+    }
+
+    #[test]
+    fn cancelling_preparation_never_starts_a_late_native_gesture_and_allows_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.wav");
+        std::fs::write(&path, b"unchanged source").unwrap();
+        let (wake, ready) = mpsc::sync_channel(1);
+        let mut worker =
+            DragWorker::start_with(move || wake.send(()).unwrap(), |_, _| Ok(vec![1])).unwrap();
+        worker.request(vec![path.clone()]).unwrap();
+        ready.recv_timeout(Duration::from_secs(3)).unwrap();
+        worker.cancel();
+        assert_eq!(
+            worker
+                .poll_with(|_, _| panic!("Cancelled preparation entered OLE"))
+                .unwrap()
+                .unwrap(),
+            DragOutcome::Cancelled
+        );
+        assert!(!worker.busy());
+        worker.request(vec![path.clone()]).unwrap();
+        ready.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(
+            worker
+                .poll_with(|_, _| Ok(Presentation::Complete(DragOutcome::Rejected)))
+                .unwrap()
+                .unwrap(),
+            DragOutcome::Rejected
+        );
+        assert!(!worker.busy());
+        assert_eq!(std::fs::read(path).unwrap(), b"unchanged source");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn consuming_preparation_on_an_unrelated_thread_is_rejected_before_ole() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.wav");
+        std::fs::write(&path, b"unchanged source").unwrap();
+        let (wake, ready) = mpsc::sync_channel(1);
+        let mut worker =
+            DragWorker::start_with(move || wake.send(()).unwrap(), |_, _| Ok(vec![1])).unwrap();
+        worker.request(vec![path]).unwrap();
+        ready.recv_timeout(Duration::from_secs(3)).unwrap();
+        thread::spawn(move || {
+            assert!(matches!(
+                worker
+                    .poll_with(|_, _| panic!("Wrong thread entered OLE"))
+                    .unwrap(),
+                Err(DragError::WrongThread)
+            ));
+            assert!(!worker.busy());
+        })
+        .join()
+        .unwrap();
+    }
 
     #[test]
     fn paths_and_selection_count_are_bounded() {
@@ -261,7 +432,7 @@ mod tests {
                 while !stop.load(Ordering::Acquire) {
                     thread::park_timeout(Duration::from_millis(1));
                 }
-                Ok(DragOutcome::Cancelled)
+                Ok(Vec::new())
             },
         )
         .unwrap();

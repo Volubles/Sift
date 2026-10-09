@@ -210,7 +210,7 @@ impl Browser {
 
     fn accept_events(&mut self, ctx: &egui::Context) {
         while let Some(result) = self.drags.poll() {
-            // OLE receives the final mouse release on its own thread. Reset egui
+            // OLE consumes the final mouse release in its modal loop. Reset egui
             // so the next click/drag cannot inherit a stuck pointer or widget ID.
             ctx.stop_dragging();
             ctx.input_mut(|input| input.pointer = Default::default());
@@ -223,7 +223,10 @@ impl Browser {
                     "The destination did not accept the file. Try a writable folder in Explorer.",
                 ),
                 Err(error) => {
-                    if matches!(error, DragError::Native(_) | DragError::Disconnected) {
+                    if matches!(
+                        error,
+                        DragError::Native(_) | DragError::Disconnected | DragError::WrongThread
+                    ) {
                         eprintln!("Native file drag failed: {error}");
                     }
                     DragNotice::Error(format!("Could not drag the file: {error}"))
@@ -354,7 +357,10 @@ impl Browser {
         self.drag_notice = match self.drags.request(vec![sample.source]) {
             Ok(()) => None,
             Err(error) => {
-                if matches!(error, DragError::Native(_) | DragError::Disconnected) {
+                if matches!(
+                    error,
+                    DragError::Native(_) | DragError::Disconnected | DragError::WrongThread
+                ) {
                     eprintln!("Native file drag could not start: {error}");
                 }
                 Some(DragNotice::Error(format!(
@@ -579,7 +585,16 @@ impl Browser {
             ui.colored_label(Color32::from_rgb(245, 143, 140), message);
         }
         if self.drags.busy() {
-            ui.label("Dragging a copy. Release in a folder, or press Esc to cancel.");
+            ui.horizontal(|ui| {
+                ui.label(if self.drags.native_active() {
+                    "Dragging a copy. Release in a folder, or press Esc to cancel."
+                } else {
+                    "Preparing file copy. Keep the left mouse button held; Esc cancels."
+                });
+                if ui.button("Cancel file drag").clicked() {
+                    self.drags.cancel();
+                }
+            });
         } else if let Some(notice) = &self.drag_notice {
             match notice {
                 DragNotice::Message(message) => {
@@ -922,6 +937,12 @@ impl eframe::App for Browser {
         self.rendered_frames += 1;
         self.input_events += ui.input(|input| input.events.len()) as u64;
         let ctx = ui.ctx().clone();
+        if self.drags.busy()
+            && (ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+                || ctx.input(|input| input.pointer.button_released(egui::PointerButton::Primary)))
+        {
+            self.drags.cancel();
+        }
         egui::Panel::top("header").show(ui, |ui| self.header(ui));
         egui::Panel::bottom("footer").show(ui, |ui| {
             ui.label(

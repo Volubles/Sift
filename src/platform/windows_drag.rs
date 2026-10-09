@@ -13,8 +13,8 @@ use windows::Win32::{
     Foundation::{
         DATA_S_SAMEFORMATETC, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS,
         DV_E_DVASPECT, DV_E_FORMATETC, DV_E_LINDEX, DV_E_TYMED, E_INVALIDARG, E_NOTIMPL,
-        ERROR_SUCCESS, GetLastError, GlobalFree, HGLOBAL, LPARAM, OLE_E_ADVISENOTSUPPORTED, S_OK,
-        SetLastError, WPARAM,
+        ERROR_SUCCESS, GetLastError, GlobalFree, HGLOBAL, OLE_E_ADVISENOTSUPPORTED, S_OK,
+        SetLastError,
     },
     System::{
         Com::{
@@ -28,26 +28,35 @@ use windows::Win32::{
             IDropSource_Impl, OleInitialize, OleUninitialize,
         },
         SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS},
-        Threading::GetCurrentThreadId,
     },
     UI::{
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, GetCapture, ReleaseCapture, VK_ESCAPE, VK_LBUTTON,
         },
         Shell::{CFSTR_PREFERREDDROPEFFECT, DROPFILES, SHCreateStdEnumFmtEtc},
-        WindowsAndMessaging::{MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, WM_KEYDOWN},
     },
 };
 use windows_core::{BOOL, HRESULT, Ref, implement};
 
 use super::{DragError, DragOutcome, Sources};
 
+#[cfg(test)]
+use windows::Win32::{
+    Foundation::{LPARAM, WPARAM},
+    System::Threading::GetCurrentThreadId,
+    UI::WindowsAndMessaging::{MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, WM_KEYDOWN},
+};
+
 const MAX_PATH_UNITS: usize = 32_767;
 const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
 
-pub(super) fn prepare_thread() -> u32 {
-    // SAFETY: this worker owns its message queue. PeekMessage creates the queue
-    // before its ID is published, so shutdown can wake a modal OLE loop.
+mod host;
+pub(super) use host::DragHost;
+
+#[cfg(test)]
+fn prepare_thread() -> u32 {
+    // SAFETY: this test owns its message queue. Creating it lets the cancellation
+    // test wake the OLE loop without injecting input into another app.
     unsafe {
         let mut message = MSG::default();
         let _has_pending_message = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
@@ -55,12 +64,13 @@ pub(super) fn prepare_thread() -> u32 {
     }
 }
 
-pub(super) fn wake_cancellation(thread: u32) {
+#[cfg(test)]
+fn wake_cancellation(thread: u32) {
     if thread == 0 {
         return;
     }
-    // SAFETY: this posts only to our worker, never to the user's active window.
-    // The shutdown flag is authoritative; the message just wakes OLE polling.
+    // SAFETY: tests post only to their own thread, never to another app.
+    // The cancellation flag is authoritative; this just wakes OLE polling.
     if let Err(error) =
         unsafe { PostThreadMessageW(thread, WM_KEYDOWN, WPARAM(VK_ESCAPE.0 as usize), LPARAM(0)) }
     {
@@ -71,9 +81,9 @@ pub(super) fn wake_cancellation(thread: u32) {
     }
 }
 
-pub(super) fn release_pointer_capture() -> Result<(), DragError> {
+fn release_pointer_capture() -> Result<(), DragError> {
     // SAFETY: called on the UI thread; GetCapture returns only that thread's
-    // capture. OLE must acquire its own capture on the drag worker.
+    // capture. OLE acquires its own capture on this same input thread.
     unsafe {
         if !GetCapture().is_invalid() {
             ReleaseCapture().map_err(native_error)?;
@@ -86,7 +96,7 @@ struct Apartment;
 
 impl Apartment {
     fn enter() -> windows_core::Result<Self> {
-        // SAFETY: callers use a dedicated thread, and all COM objects are dropped
+        // SAFETY: all COM objects are created/dropped on this initialized thread
         // before this guard. S_FALSE also requires a matching OleUninitialize.
         unsafe { OleInitialize(None)? };
         Ok(Self)
@@ -104,15 +114,19 @@ fn native_error(error: windows_core::Error) -> DragError {
     DragError::Native(error.to_string())
 }
 
-pub(super) fn drag(sources: &Sources, shutdown: Arc<AtomicBool>) -> Result<DragOutcome, DragError> {
-    let _apartment = Apartment::enter().map_err(native_error)?;
-    let object = data_object(sources)?;
+pub(super) fn drag(bytes: Vec<u8>, cancelled: Arc<AtomicBool>) -> Result<DragOutcome, DragError> {
     // SAFETY: GetAsyncKeyState takes a numeric virtual-key constant; it has no
     // pointer/lifetime contract. Do not start a late drag after mouse release.
-    if shutdown.load(Ordering::Acquire) || unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } >= 0 {
+    if cancelled.load(Ordering::Acquire)
+        || unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } >= 0
+        || unsafe { GetAsyncKeyState(VK_ESCAPE.0 as i32) } < 0
+    {
         return Ok(DragOutcome::Cancelled);
     }
-    let source: IDropSource = CopySource { shutdown }.into();
+    let _apartment = Apartment::enter().map_err(native_error)?;
+    let object = data_object_from_bytes(bytes)?;
+    release_pointer_capture()?;
+    let source: IDropSource = CopySource { cancelled }.into();
     let mut effect = DROPEFFECT_NONE;
     // SAFETY: both reference-counted objects and effect remain alive throughout
     // the modal call on this initialized STA. Only copying is permitted.
@@ -132,7 +146,7 @@ fn outcome(status: HRESULT, effect: DROPEFFECT) -> Result<DragOutcome, DragError
     }
 }
 
-fn drop_bytes(sources: &Sources) -> Result<Vec<u8>, DragError> {
+pub(super) fn drop_bytes(sources: &Sources) -> Result<Vec<u8>, DragError> {
     // DROPFILES has a stable 20-byte Windows ABI, followed by UTF-16 paths.
     const { assert!(size_of::<DROPFILES>() == 20) };
     let mut bytes = Vec::from(20_u32.to_le_bytes());
@@ -227,8 +241,12 @@ fn reserved_name(name: &[u16]) -> bool {
         })
 }
 
+#[cfg(test)]
 fn data_object(sources: &Sources) -> Result<IDataObject, DragError> {
-    let bytes = drop_bytes(sources)?;
+    data_object_from_bytes(drop_bytes(sources)?)
+}
+
+fn data_object_from_bytes(bytes: Vec<u8>) -> Result<IDataObject, DragError> {
     // SAFETY: a static, null-terminated Windows clipboard format name.
     let preferred = unsafe { RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT) };
     if preferred == 0 || preferred > u16::MAX as u32 {
@@ -399,12 +417,12 @@ impl IDataObject_Impl for FileOffer_Impl {
 
 #[implement(IDropSource)]
 struct CopySource {
-    shutdown: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl IDropSource_Impl for CopySource_Impl {
     fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
-        if escape.as_bool() || self.shutdown.load(Ordering::Acquire) {
+        if escape.as_bool() || self.cancelled.load(Ordering::Acquire) {
             DRAGDROP_S_CANCEL
         } else if keys.0 & MK_LBUTTON.0 == 0 {
             DRAGDROP_S_DROP
@@ -579,11 +597,11 @@ mod tests {
     }
 
     #[test]
-    fn copy_source_handles_escape_modifiers_and_shutdown_without_offering_move() {
+    fn copy_source_handles_escape_modifiers_and_cancellation_without_offering_move() {
         let _apartment = Apartment::enter().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let source: IDropSource = CopySource {
-            shutdown: stop.clone(),
+            cancelled: stop.clone(),
         }
         .into();
         for keys in [MK_LBUTTON, MK_LBUTTON | MK_SHIFT, MK_LBUTTON | MK_CONTROL] {

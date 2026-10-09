@@ -21,6 +21,12 @@ core. Playback and waveform analysis are implemented as described in
 desktop drag gestures are implemented as described in
 [native transfer architecture](DRAG-AND-DROP.md). Projects remain unimplemented.
 
+File validation/encoding runs on a bounded preparation worker. The modal OLE
+gesture is posted to a private HWND on the window's input thread after the
+egui/winit event callback returns; it does not run on a worker input queue or
+inside a borrowed application callback. Native references stay thread-local,
+and final results wake the UI through a bounded queue.
+
 Catalog schema 1 stores Windows paths as little-endian UTF-16 blobs, preserving
 unpaired surrogates; display text is separate. Locators are platform-specific.
 The first index is additive/updating, with stable IDs for unchanged locations.
