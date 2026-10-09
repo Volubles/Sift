@@ -8,7 +8,7 @@ description = "A resource-efficient local sample browser"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:eframe", "dep:rfd"]
+desktop = ["dep:eframe", "dep:rfd", "playback"]
 wgpu-renderer = ["desktop", "eframe/wgpu"]
 playback = ["dep:cpal"]
 

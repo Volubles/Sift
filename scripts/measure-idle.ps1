@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory)][string]$Output,
     [int]$Seconds = 60,
     [ValidateSet('default','dx12','vulkan','opengl')][string]$Backend = 'default',
-    [ValidateSet('wgpu','glow')][string]$Renderer = 'wgpu'
+    [ValidateSet('wgpu','glow')][string]$Renderer = 'glow'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,7 +16,9 @@ if (Test-Path -LiteralPath $outputPath) { throw 'Refusing to overwrite measureme
 New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($outputPath)) -Force | Out-Null
 $timer = [System.Diagnostics.Stopwatch]::StartNew()
 $processOptions = @{ FilePath=$executableFile.FullName; ArgumentList=@('--database', ('"' + $databaseFile.FullName + '"'), 'browse'); WindowStyle='Hidden'; PassThru=$true }
-$processOptions.Environment = @{ SIFT_RENDERER=$Renderer }
+$frameReportPath = $outputPath + '.frames.txt'
+if (Test-Path -LiteralPath $frameReportPath) { throw 'Refusing to overwrite frame diagnostics.' }
+$processOptions.Environment = @{ SIFT_RENDERER=$Renderer; SIFT_FRAME_REPORT=$frameReportPath }
 if ($Backend -ne 'default') { $processOptions.Environment.WGPU_BACKEND=$Backend }
 $measuredApp = Start-Process @processOptions
 try {
@@ -54,15 +56,18 @@ try {
         PeakPrivateMiB = ($samples | Measure-Object PrivateBytes -Maximum).Maximum / 1MB
         MeanWorkingSetMiB = ($samples | Measure-Object WorkingSetBytes -Average).Average / 1MB
         GpuMemory = 'Not measured'
-        Limitations = 'Synthetic metadata; window appearance is not interactive readiness; no input or audio activity.'
+        Limitations = 'Synthetic metadata; window appearance is not interactive readiness; no deliberate audio activity; input is not prevented.'
         Samples = $samples
     }
-    [System.IO.File]::WriteAllText($outputPath, ($result | ConvertTo-Json -Depth 4) + "`n", [System.Text.UTF8Encoding]::new($false))
-    $result.Remove('Samples')
-    $result | ConvertTo-Json
 } finally {
     if (-not $measuredApp.HasExited) {
         if (-not $measuredApp.CloseMainWindow()) { throw 'Could not request closure of the test application.' }
         if (-not $measuredApp.WaitForExit(5000)) { throw 'Test application did not exit after its close request.' }
     }
 }
+if (Test-Path -LiteralPath $frameReportPath) {
+    $result.FrameDiagnostics = [System.IO.File]::ReadAllText($frameReportPath).Trim()
+}
+[System.IO.File]::WriteAllText($outputPath, ($result | ConvertTo-Json -Depth 4) + "`n", [System.Text.UTF8Encoding]::new($false))
+$result.Remove('Samples')
+$result | ConvertTo-Json

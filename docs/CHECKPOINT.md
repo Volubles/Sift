@@ -1,5 +1,8 @@
 # Metadata browser checkpoint
 
+Historical checkpoint. See [preview and waveform checkpoint](PREVIEW.md) for
+the current implementation and subsequent verification.
+
 Verified on Windows, 2026-10-09. This is an initial usable slice, not completion
 of the product roadmap or the full technical prototype acceptance list.
 

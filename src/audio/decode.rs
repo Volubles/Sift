@@ -180,7 +180,10 @@ impl Decoder {
                     1 => [frame[0], frame[0]],
                     2 => [frame[0], frame[1]],
                     _ => {
-                        let mono = frame.iter().sum::<f32>() / self.channels as f32;
+                        let mono = frame
+                            .iter()
+                            .map(|value| *value / self.channels as f32)
+                            .sum::<f32>();
                         [mono, mono]
                     }
                 });

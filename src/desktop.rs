@@ -9,9 +9,11 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, RichText};
 
+use crate::audio::{player::Player, transport};
 use crate::catalog::{Sample, SampleId, SearchPage};
 use crate::library::ScanReport;
 use crate::search::{PAGE_SIZE, SearchQuery};
+use crate::waveform::{Waveform, Waveforms};
 use crate::worker::{Event, Workers};
 
 pub struct Options {
@@ -42,7 +44,19 @@ pub fn run(options: Options) -> eframe::Result {
             let workers = Workers::start(options.database.clone(), move || {
                 wake_context.request_repaint()
             })?;
-            Ok(Box::new(Browser::new(workers, options, capture_passed)))
+            let wave_context = context.clone();
+            let waveforms = Waveforms::start(options.database.clone(), move || {
+                wave_context.request_repaint()
+            })?;
+            let audio_context = context.clone();
+            let player = Player::start(move || audio_context.request_repaint())?;
+            Ok(Box::new(Browser::new(
+                workers,
+                waveforms,
+                player,
+                options,
+                capture_passed,
+            )))
         }),
     )?;
     if expects_capture && !reported_capture.load(Ordering::Acquire) {
@@ -66,6 +80,15 @@ fn selected_renderer() -> eframe::Result<eframe::Renderer> {
 
 struct Browser {
     workers: Workers,
+    waveforms: Waveforms,
+    player: Player,
+    waveform: Option<Arc<Waveform>>,
+    wave_generation: u64,
+    wave_pending: bool,
+    wave_error: Option<String>,
+    audio_error: Option<String>,
+    output_name: Option<String>,
+    volume: f32,
     query_text: String,
     query: SearchQuery,
     generation: u64,
@@ -83,12 +106,29 @@ struct Browser {
     capture_writer: Option<JoinHandle<std::io::Result<()>>>,
     capture_passed: Arc<AtomicBool>,
     started: Instant,
+    rendered_frames: u64,
+    input_events: u64,
 }
 
 impl Browser {
-    fn new(workers: Workers, options: Options, capture_passed: Arc<AtomicBool>) -> Self {
+    fn new(
+        workers: Workers,
+        waveforms: Waveforms,
+        player: Player,
+        options: Options,
+        capture_passed: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             workers,
+            waveforms,
+            player,
+            waveform: None,
+            wave_generation: 0,
+            wave_pending: false,
+            wave_error: None,
+            audio_error: None,
+            output_name: None,
+            volume: 0.4,
             query_text: String::new(),
             query: SearchQuery::All,
             generation: 0,
@@ -106,6 +146,8 @@ impl Browser {
             capture_writer: None,
             capture_passed,
             started: Instant::now(),
+            rendered_frames: 0,
+            input_events: 0,
         }
     }
 
@@ -174,7 +216,9 @@ impl Browser {
                                 self.selected = Some(updated.clone());
                             }
                         } else {
-                            self.selected = page.rows.first().cloned();
+                            if let Some(sample) = page.rows.first().cloned() {
+                                self.select(sample);
+                            }
                         }
                         insert_page(&mut self.pages, page);
                     }
@@ -207,6 +251,214 @@ impl Browser {
                     self.error = Some(format!("Catalog could not open: {message}"));
                 }
             }
+        }
+        while let Some(ready) = self.waveforms.poll() {
+            if ready.generation != self.wave_generation {
+                continue;
+            }
+            self.wave_pending = false;
+            match ready.result {
+                Ok(waveform) => {
+                    self.waveform = Some(waveform);
+                    self.wave_error = None;
+                }
+                Err(error) => {
+                    eprintln!("Waveform analysis failed: {error}");
+                    self.wave_error = Some(error.to_string());
+                }
+            }
+        }
+        while let Some(message) = self.player.poll() {
+            if message.generation != self.player.generation() {
+                continue;
+            }
+            if let Some(error) = message.error {
+                eprintln!("Preview failed: {error}");
+                self.audio_error = Some(error);
+            }
+            if let Some(output) = message.output {
+                self.output_name = Some(output);
+                self.audio_error = None;
+            }
+        }
+    }
+
+    fn select(&mut self, sample: Sample) {
+        let autoplay = matches!(
+            self.player.snapshot().phase,
+            transport::PLAYING | transport::LOADING
+        );
+        self.wave_generation += 1;
+        self.waveform = None;
+        self.wave_error = None;
+        self.audio_error = None;
+        self.wave_pending = sample.metadata_error.is_none();
+        if self.wave_pending
+            && let Err(error) = self
+                .waveforms
+                .request(self.wave_generation, sample.source.clone())
+        {
+            self.wave_error = Some(error.to_string());
+            self.wave_pending = false;
+        }
+        let result = if autoplay && sample.metadata_error.is_none() {
+            self.player.play(sample.source.clone(), 0.0)
+        } else {
+            self.player.stop()
+        };
+        if let Err(error) = result {
+            self.audio_error = Some(error.to_string());
+        }
+        self.selected = Some(sample);
+    }
+
+    fn toggle_preview(&mut self) {
+        let Some(sample) = &self.selected else {
+            return;
+        };
+        if sample.metadata_error.is_some() {
+            return;
+        }
+        let result = match self.player.snapshot().phase {
+            transport::PLAYING | transport::LOADING => self.player.pause(),
+            transport::PAUSED => self.player.resume(),
+            _ => self.player.play(sample.source.clone(), 0.0),
+        };
+        if let Err(error) = result {
+            self.audio_error = Some(error.to_string());
+        }
+    }
+
+    fn preview(&mut self, ui: &mut egui::Ui) {
+        let snapshot = self.player.snapshot();
+        let available = self
+            .selected
+            .as_ref()
+            .is_some_and(|sample| sample.metadata_error.is_none());
+        ui.horizontal(|ui| {
+            let label = if matches!(snapshot.phase, transport::PLAYING | transport::LOADING) {
+                "Pause"
+            } else {
+                "Play"
+            };
+            if ui
+                .add_enabled(available, egui::Button::new(label))
+                .clicked()
+            {
+                self.toggle_preview();
+            }
+            if ui.button("Stop").clicked()
+                && let Err(error) = self.player.stop()
+            {
+                self.audio_error = Some(error.to_string());
+            }
+            if ui
+                .add(egui::Slider::new(&mut self.volume, 0.0..=1.0).text("Volume"))
+                .changed()
+                && let Err(error) = self.player.volume(self.volume)
+            {
+                self.audio_error = Some(error.to_string());
+            }
+            let duration = self
+                .waveform
+                .as_ref()
+                .map(|waveform| waveform.duration())
+                .or_else(|| {
+                    self.selected
+                        .as_ref()
+                        .and_then(|sample| sample.audio.duration_seconds)
+                });
+            ui.label(format!(
+                "{:.2} / {} s",
+                snapshot.seconds,
+                duration
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "Unknown".into())
+            ));
+            ui.label(RichText::new("Space: play/pause").small().weak());
+        });
+        let (response, painter) = ui.allocate_painter(
+            egui::vec2(ui.available_width(), 105.0),
+            egui::Sense::click(),
+        );
+        let rect = response.rect;
+        painter.rect_filled(rect, 3.0, Color32::from_rgb(15, 19, 20));
+        let middle = rect.center().y;
+        painter.line_segment(
+            [
+                egui::pos2(rect.left(), middle),
+                egui::pos2(rect.right(), middle),
+            ],
+            egui::Stroke::new(1.0, Color32::from_gray(45)),
+        );
+        if let Some(waveform) = &self.waveform {
+            for (index, peak) in waveform.peaks.iter().enumerate() {
+                let x =
+                    rect.left() + (index as f32 + 0.5) / waveform.peaks.len() as f32 * rect.width();
+                painter.line_segment(
+                    [
+                        egui::pos2(x, middle - peak[1].clamp(-1.0, 1.0) * rect.height() * 0.45),
+                        egui::pos2(x, middle - peak[0].clamp(-1.0, 1.0) * rect.height() * 0.45),
+                    ],
+                    egui::Stroke::new(1.0, Color32::from_rgb(135, 222, 194)),
+                );
+            }
+            let duration = waveform.duration();
+            let x =
+                rect.left() + (snapshot.seconds / duration).clamp(0.0, 1.0) as f32 * rect.width();
+            painter.line_segment(
+                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                egui::Stroke::new(1.5, Color32::WHITE),
+            );
+            if response.clicked()
+                && let Some(position) = response.interact_pointer_pos()
+                && let Some(sample) = &self.selected
+            {
+                let seconds =
+                    ((position.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64 * duration;
+                if let Err(error) = self.player.play(sample.source.clone(), seconds) {
+                    self.audio_error = Some(error.to_string());
+                }
+            }
+        } else {
+            let text = if self.wave_pending {
+                "Loading waveform..."
+            } else {
+                "Select a sound to see its waveform"
+            };
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(13.0),
+                Color32::GRAY,
+            );
+        }
+        if let Some(error) = &self.wave_error {
+            ui.colored_label(
+                Color32::from_rgb(245, 143, 140),
+                format!("Waveform unavailable: {error}"),
+            );
+        }
+        if let Some(error) = &self.audio_error {
+            ui.colored_label(
+                Color32::from_rgb(245, 143, 140),
+                format!("Preview unavailable: {error}"),
+            );
+            if ui.button("Reconnect audio output").clicked()
+                && let Some(sample) = &self.selected
+                && let Err(error) = self
+                    .player
+                    .reconnect(sample.source.clone(), snapshot.seconds)
+            {
+                self.audio_error = Some(error.to_string());
+            }
+        }
+        if let Some(output) = &self.output_name {
+            ui.label(RichText::new(format!("Output: {output}")).small().weak());
+        }
+        if matches!(snapshot.phase, transport::PLAYING | transport::LOADING) {
+            ui.ctx().request_repaint_after(Duration::from_millis(33));
         }
     }
 
@@ -371,7 +623,7 @@ impl Browser {
     fn list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("Library");
-            ui.label(RichText::new("METADATA PROTOTYPE").small().weak());
+            ui.label(RichText::new("LOCAL LIBRARY").small().weak());
         });
         ui.separator();
         if !self.ready {
@@ -424,10 +676,11 @@ impl Browser {
                             [ui.available_width(), 32.0],
                             egui::Button::new(label).selected(selected_id == Some(sample.id)),
                         );
-                        if response.clicked() {
-                            self.selected = Some(sample.clone());
-                        }
+                        let clicked = response.clicked().then(|| sample.clone());
                         response.on_hover_text(&sample.display_path);
+                        if let Some(sample) = clicked {
+                            self.select(sample);
+                        }
                     } else {
                         ui.add_sized(
                             [ui.available_width(), 32.0],
@@ -445,7 +698,11 @@ impl Browser {
         let Some(path) = self.smoke.clone() else {
             return;
         };
-        if self.ready && self.scan.is_none() && !self.pages.is_empty() && !self.screenshot_requested
+        if self.ready
+            && self.scan.is_none()
+            && !self.wave_pending
+            && !self.pages.is_empty()
+            && !self.screenshot_requested
         {
             self.screenshot_requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
@@ -536,11 +793,32 @@ fn insert_page(pages: &mut VecDeque<SearchPage>, page: SearchPage) {
 }
 
 impl eframe::App for Browser {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(path) = std::env::var_os("SIFT_FRAME_REPORT") {
+            let report = format!(
+                "frames={} input_events={} phase={}\n",
+                self.rendered_frames,
+                self.input_events,
+                self.player.snapshot().phase
+            );
+            use std::io::Write;
+            let result = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .and_then(|mut file| file.write_all(report.as_bytes()));
+            if let Err(error) = result {
+                eprintln!("Frame diagnostic failed: {error}");
+            }
+        }
+    }
     fn logic(&mut self, _context: &egui::Context, _frame: &mut eframe::Frame) {
         self.accept_events();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.rendered_frames += 1;
+        self.input_events += ui.input(|input| input.events.len()) as u64;
         let ctx = ui.ctx().clone();
         egui::Panel::top("header").show(ui, |ui| self.header(ui));
         egui::Panel::bottom("footer").show(ui, |ui| {
@@ -552,11 +830,17 @@ impl eframe::App for Browser {
                 .weak(),
             );
         });
+        egui::Panel::bottom("preview").show(ui, |ui| self.preview(ui));
         egui::Panel::right("details")
             .resizable(true)
             .default_size(300.0)
             .show(ui, |ui| self.details(ui));
         egui::CentralPanel::default().show(ui, |ui| self.list(ui));
+        if !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
+        {
+            self.toggle_preview();
+        }
         self.smoke_check(&ctx);
     }
 }

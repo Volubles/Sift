@@ -1,4 +1,6 @@
 pub mod decode;
+#[cfg(feature = "playback")]
+pub mod player;
 pub mod resample;
 pub mod transport;
 

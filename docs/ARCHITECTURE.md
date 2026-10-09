@@ -16,7 +16,8 @@ disconnects channels, and joins workers without an event-queue deadlock.
 
 Default runtime storage is in the user's data directory, not the build cache
 or launch directory. The desktop/headless feature configurations share the same
-core. Playback, waveform analysis, projects, and native outgoing file dragging
+core. Playback and waveform analysis are implemented as described in
+[preview architecture](PREVIEW.md). Projects and native outgoing file dragging
 remain unimplemented.
 
 Catalog schema 1 stores Windows paths as little-endian UTF-16 blobs, preserving
@@ -29,7 +30,7 @@ stored explicitly. Parser reads are limited to 8 MiB per file.
 The [stack review](STACK-REVIEW.md) records the 2026-10-09 comparison, including
 Slint/Iced/GPUI, storage alternatives, audio streaming options, and remaining
 prototype checks. Keep egui as the first candidate and Slint as the main UI
-alternative; no comparative runtime measurements exist yet.
+alternative; the [renderer baseline](BASELINE.md) now provides local comparison evidence.
 
 ## Candidates and decision boundaries
 

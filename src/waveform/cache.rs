@@ -10,7 +10,10 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn open(path: &Path) -> rusqlite::Result<Self> {
+    pub fn open(path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(1))?;
         connection.execute_batch("PRAGMA max_page_count=32768; CREATE TABLE IF NOT EXISTS waveforms(path BLOB PRIMARY KEY, size INTEGER NOT NULL, modified TEXT NOT NULL, algorithm INTEGER NOT NULL, rate INTEGER NOT NULL, frames INTEGER NOT NULL, span INTEGER NOT NULL, peaks BLOB NOT NULL, used INTEGER NOT NULL) STRICT; CREATE INDEX IF NOT EXISTS waveform_used ON waveforms(used);")?;

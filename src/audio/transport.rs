@@ -94,6 +94,11 @@ impl Render {
             return;
         }
         let gain = f32::from_bits(self.shared.volume.load(Ordering::Relaxed));
+        let gain = if gain.is_finite() {
+            gain.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let mut rendered = 0;
         let mut nonzero = 0;
         for destination in output.chunks_exact_mut(self.channels) {
@@ -102,8 +107,16 @@ impl Render {
             }
             match self.consumer.pop() {
                 Ok(frame) if frame.generation == generation => {
-                    let left = (frame.samples[0] * gain).clamp(-1.0, 1.0);
-                    let right = (frame.samples[1] * gain).clamp(-1.0, 1.0);
+                    let left = if frame.samples[0].is_finite() {
+                        (frame.samples[0] * gain).clamp(-1.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let right = if frame.samples[1].is_finite() {
+                        (frame.samples[1] * gain).clamp(-1.0, 1.0)
+                    } else {
+                        0.0
+                    };
                     destination[0] = if self.channels == 1 {
                         (left + right) * 0.5
                     } else {

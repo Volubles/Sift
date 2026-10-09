@@ -1,7 +1,7 @@
 # First release resource baseline
 
 Measured on Windows on 2026-10-09, with 100,000 synthetic metadata records,
-the same 1120 x 720 browser, a local catalog, no interaction, and no audio.
+the same 1120 x 720 browser, a local catalog, no deliberate interaction, and no audio.
 CPU: Intel Core i9-13900K, 32 logical processors. The system exposes NVIDIA
 RTX 5080, Intel UHD 770, and Parsec display adapters; GPU selection/memory were
 not independently measured. These are single-run baselines, not a population
@@ -33,6 +33,22 @@ playback, indexing, active scrolling, or on another GPU/driver.
 Keep WGPU available with the `wgpu-renderer` feature. Select it for diagnostics
 with `SIFT_RENDERER=wgpu`; an unsupported selection fails explicitly. This is a
 renderer decision within egui, not a change to the core/UI framework.
+
+## Post-preview observations
+
+The preview build also fits the private-memory target in the observed runs:
+approximately 77.21 MiB mean private bytes and 74.59 MiB working set in a
+30-second no-input repeat. Its exit diagnostic recorded 37 startup/UI frames,
+zero input events, and idle audio state; process CPU-time delta was zero at
+counter resolution. This shorter repeat does not qualify the full 60-second
+idle budget or audible latency.
+
+Two other preview observations reported 0.676%/0.813% machine CPU. The latter
+recorded 9,754 input events and 2,748 UI frames, so it was active interaction,
+not idle. The initial run lacked activity instrumentation. Do not use either
+as proof of idle CPU or silently discard them from the raw records. Input was
+not prevented during the original renderer baselines either; comparisons remain
+local observations requiring controlled repetition on representative hardware.
 
 ## Reproduce
 

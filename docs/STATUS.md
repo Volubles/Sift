@@ -24,7 +24,8 @@ and architecture documents describe the intended application.
 - Additional tests cover concurrent visible pages, worker startup failure,
   full-queue shutdown, and retaining pages when scrolling backward.
 
-Playback, waveforms, projects, tags, and export are not implemented yet. No CI
+Playback and waveforms are now implemented with a bounded audio worker and
+derived waveform cache. Projects, tags, and export are not implemented yet. No CI
 configuration exists yet. Active implementation branch: `codex/library-prototype`;
 check Git before assuming a branch in a future session.
 No remote, publishing, or distribution license has been selected.
@@ -54,8 +55,8 @@ The desktop/core compile; fifteen default-feature tests, fourteen headless tests
 warning-free Clippy, and formatting checks pass. An actual Windows window has
 rendered real generated fixtures and a 100,000-row synthetic catalog with only
 128 records loaded into the view. Captures were visually checked.
-Playback, native outgoing dragging, and release performance budgets are not
-verified. See [checkpoint verification](CHECKPOINT.md) for evidence and limits.
+Native outgoing dragging and the complete performance/device matrix remain
+unverified. See [preview verification](PREVIEW.md) for the new evidence and limits.
 The CLI also indexed generated WAV, FLAC, MP3, and AIFF fixtures without errors;
 all four SHA-256 source hashes were unchanged afterward.
 
@@ -65,15 +66,21 @@ The first release baseline found excessive private memory with WGPU; a
 controlled Glow comparison reduced it from about 477 to 134 MiB. Glow is now
 the default, with WGPU retained as an optional renderer. See [baseline](BASELINE.md).
 
-Audio foundation is now implemented: cancellable packet decoding, accurate
-seeking, bounded stereo conversion, rate conversion, generation-tagged transport,
-and a bounded waveform analyzer/cache. Twenty-three headless tests pass; device
-output and UI controls are the next integration slice and are not verified yet.
+Preview integration is complete: 26 default-feature and 23 headless tests pass,
+plus one explicitly run real-device concurrency test. Four generated formats
+passed actual WASAPI callback exercises with zero final-run underruns and
+unchanged source hashes. Interactive listening and device unplug/replug are
+still manual checks; internal callback timing is not audible-latency proof.
 
-Implement waveform analysis and controlled preview playback next. Prove seeking,
-cancellation, device recovery, and native outgoing dragging in coherent
-checkpoints. Use disposable fixtures and measure idle resources, latency, and
-memory. Do not present the metadata browser as a finished sampler.
+Post-preview no-input observation: approximately 77 MiB private bytes over
+30 seconds with no measurable process CPU-time increase. Two higher-CPU runs
+were not controlled for interaction; diagnostics detected active input in one.
+The full idle budget and device/codec matrix are not certified from these runs.
+
+Prove native outgoing copy-only dragging into Explorer next, then implement
+project references, folders, and multi-selection. Keep incremental indexing,
+source reconciliation, broader device tests, and performance qualification
+explicit. Sift is still a prototype, not a finished sampler.
 
 Choose major technical details from that evidence before introducing a full
 analysis pipeline, AI, or a large application framework.
