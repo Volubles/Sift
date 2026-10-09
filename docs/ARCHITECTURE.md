@@ -5,7 +5,7 @@ This document combines intended architecture and the first implemented slice.
 SQLite persistence, and bounded queries; other areas remain planned. Rust 1.98.1,
 rusqlite 0.40.2, and Symphonia 0.6.1 are pinned and verified for this slice.
 
-The next slice adds `desktop`, `worker`, and `config`. egui/eframe 0.36.2 renders
+The desktop slice provides `desktop`, `worker`, and `config`. egui/eframe 0.36.2 renders
 the native window; Glow is now the default after the [release baseline](BASELINE.md),
 and WGPU remains optional. RFD 0.17.2 supplies the Windows folder dialog. The index
 worker owns a writable connection and the search worker owns an independent
@@ -17,8 +17,9 @@ disconnects channels, and joins workers without an event-queue deadlock.
 Default runtime storage is in the user's data directory, not the build cache
 or launch directory. The desktop/headless feature configurations share the same
 core. Playback and waveform analysis are implemented as described in
-[preview architecture](PREVIEW.md). Projects and native outgoing file dragging
-remain unimplemented.
+[preview architecture](PREVIEW.md). The Windows native copy-only adapter and
+desktop drag gestures are implemented as described in
+[native transfer architecture](DRAG-AND-DROP.md). Projects remain unimplemented.
 
 Catalog schema 1 stores Windows paths as little-endian UTF-16 blobs, preserving
 unpaired surrogates; display text is separate. Locators are platform-specific.

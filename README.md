@@ -7,8 +7,9 @@ are core requirements.
 
 The prototype provides a native Windows metadata browser and a CLI. It indexes
 chosen folders into bundled SQLite/FTS5, searches bounded result pages, and
-shows audio metadata, waveforms, and controlled audio preview. Projects are later checkpoints; this is not
-a finished application.
+shows audio metadata, waveforms, controlled audio preview, and outgoing copy-only
+file dragging on Windows. Projects are later checkpoints; this is not a finished
+application.
 
 Development uses small, coherent Conventional Commits at natural checkpoints.
 Private audio libraries, databases, exports, raw measurements, and IDE settings
@@ -43,8 +44,12 @@ cargo fmt --all -- --check
 
 The desktop opens by default. Use **Add folder** to choose a library; **Ctrl+F**
 focuses search. Click a sound to inspect its metadata and waveform. Play/Pause,
-Space, Stop, volume, and waveform clicking control the preview. Scanning can be cancelled,
-and search runs independently from indexing. Selection is currently single-item.
+Space, Stop, volume, and waveform clicking control the preview. Hold the left
+mouse button on a library row or **Drag copy to folder**, move into an Explorer
+folder, and release to offer a copy. Escape cancels the drag. Explorer handles
+file conflicts and copying progress; Sift reports the handoff. Scanning can be
+cancelled, and search runs independently from indexing. Selection is currently
+single-item.
 
 On Windows the catalog lives in `%LOCALAPPDATA%\Sift\catalog.sqlite`; it is
 independent of the executable and working directory. Override with
@@ -63,8 +68,12 @@ The prototype uses egui/eframe 0.36.2, the Glow renderer, and RFD 0.17.2 for the
 Windows folder dialog. See [checkpoint verification](docs/CHECKPOINT.md).
 
 Current scans refresh metadata but do not reconcile deleted/moved files or skip
-unchanged files yet. Projects, tags, and export are not
-implemented. Do not treat indexed metadata as verified decoder/playback support.
+unchanged files yet. Projects, tags, multi-selection, and application-managed
+folder export are not implemented. Do not treat indexed metadata as verified
+decoder/playback support.
 
 See [preview verification](docs/PREVIEW.md) for tested fixtures, device behavior,
 cache limits, and remaining checks. Source files remain unchanged.
+
+See [native drag verification](docs/DRAG-AND-DROP.md) for transfer limits,
+actual Windows Shell copying evidence, and the remaining manual Explorer checks.

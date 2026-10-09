@@ -25,7 +25,9 @@ and architecture documents describe the intended application.
   full-queue shutdown, and retaining pages when scrolling backward.
 
 Playback and waveforms are now implemented with a bounded audio worker and
-derived waveform cache. Projects, tags, and export are not implemented yet. No CI
+derived waveform cache. Single-source copy-only native dragging is integrated
+on Windows. Projects, tags, multi-selection, and application-managed export are
+not implemented yet. No CI
 configuration exists yet. Active implementation branch: `codex/library-prototype`;
 check Git before assuming a branch in a future session.
 No remote, publishing, or distribution license has been selected.
@@ -51,12 +53,13 @@ checkpoint. Git history is the source of current hashes and branch.
 The stack review checked official docs, release-tag source, and current crate
 metadata. It did not install tools or compile candidate frameworks.
 
-The desktop/core compile; fifteen default-feature tests, fourteen headless tests,
-warning-free Clippy, and formatting checks pass. An actual Windows window has
+The initial metadata-browser checkpoint compiled and passed fifteen default-
+feature tests, fourteen headless tests, Clippy, and formatting. An actual Windows window has
 rendered real generated fixtures and a 100,000-row synthetic catalog with only
 128 records loaded into the view. Captures were visually checked.
-Native outgoing dragging and the complete performance/device matrix remain
-unverified. See [preview verification](PREVIEW.md) for the new evidence and limits.
+The full interactive Explorer flow and complete performance/device matrix remain
+unverified. See [preview verification](PREVIEW.md) and
+[native drag verification](DRAG-AND-DROP.md) for subsequent evidence and limits.
 The CLI also indexed generated WAV, FLAC, MP3, and AIFF fixtures without errors;
 all four SHA-256 source hashes were unchanged afterward.
 
@@ -77,14 +80,25 @@ Post-preview no-input observation: approximately 77 MiB private bytes over
 were not controlled for interaction; diagnostics detected active input in one.
 The full idle budget and device/codec matrix are not certified from these runs.
 
-The native Windows copy-only adapter is implemented and its actual Shell target
-test copied three disposable WAV files, including Unicode and a long path,
-with unchanged originals. Encoding, bounds, cancellation, and ownership tests
-also pass. See [native drag checkpoint](DRAG-AND-DROP.md). Desktop gestures and
-manual Explorer verification are the next part of this checkpoint.
+The Windows copy-only adapter and desktop gestures are implemented. Drag a row
+or **Drag copy to folder** into a destination; Escape cancels. The actual Shell
+target test copied three disposable WAV files, including Unicode and a long
+path, with unchanged originals. Encoding, bounds, cancellation, ownership, and
+click/drag/reset tests pass. The complete integrated build passes 34 default-
+feature and 23 headless tests, plus separate Shell integration and seven adapter-
+only checks; formatting and Clippy pass. The release native window capture was
+visually checked. See [native drag checkpoint](DRAG-AND-DROP.md).
 
-Integrate native outgoing copy-only dragging into the desktop next, then implement
-project references, folders, and multi-selection. Keep incremental indexing,
+Manual Sift-to-Explorer mouse gestures, repeated drops, modifier keys, conflicts,
+and playback during dragging still require verification. Shell copying and a
+simulated egui gesture are separate evidence and do not prove that full flow.
+
+The integrated drag build's 60-second resource observation recorded about 82 MiB
+private memory and no measurable CPU-time increase. Input events were recorded;
+this is not a controlled idle qualification. See [baseline](BASELINE.md).
+
+Verify the manual Explorer flow, then implement durable project references,
+ordering/folders, and multi-selection. Keep incremental indexing,
 source reconciliation, broader device tests, and performance qualification
 explicit. Sift is still a prototype, not a finished sampler.
 

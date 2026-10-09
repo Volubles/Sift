@@ -50,6 +50,22 @@ as proof of idle CPU or silently discard them from the raw records. Input was
 not prevented during the original renderer baselines either; comparisons remain
 local observations requiring controlled repetition on representative hardware.
 
+## Post-drag observation
+
+The integrated native-drag release build was observed with the same 100,000-row
+synthetic catalog for 60.37 seconds after a five-second settle. Mean private
+memory was 82.08 MiB (82.19 MiB peak), and mean working set was 78.58 MiB. No
+process CPU-time increase was measurable in the sampling interval. The native
+window appeared after 0.089 seconds; this is not interactive-readiness timing.
+
+Exit diagnostics recorded 123 frames, 307 input events, and idle audio state.
+Input was not prevented, and those counts include startup/settle. This run is
+therefore an activity-qualified resource observation, not a certified no-input
+idle benchmark or a paired before/after comparison. GPU memory, active dragging,
+Shell copy memory, and simultaneous playback resource costs were not measured.
+The raw report records the adapter checkpoint plus the dirty desktop integration
+working tree and is ignored under `benchmarks/results/`.
+
 ## Reproduce
 
 ```powershell

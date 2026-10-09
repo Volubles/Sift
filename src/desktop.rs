@@ -12,6 +12,7 @@ use eframe::egui::{self, Color32, RichText};
 use crate::audio::{player::Player, transport};
 use crate::catalog::{Sample, SampleId, SearchPage};
 use crate::library::ScanReport;
+use crate::platform::{DragError, DragOutcome, DragWorker};
 use crate::search::{PAGE_SIZE, SearchQuery};
 use crate::waveform::{Waveform, Waveforms};
 use crate::worker::{Event, Workers};
@@ -50,10 +51,13 @@ pub fn run(options: Options) -> eframe::Result {
             })?;
             let audio_context = context.clone();
             let player = Player::start(move || audio_context.request_repaint())?;
+            let drag_context = context.clone();
+            let drags = DragWorker::start(move || drag_context.request_repaint())?;
             Ok(Box::new(Browser::new(
                 workers,
                 waveforms,
                 player,
+                drags,
                 options,
                 capture_passed,
             )))
@@ -82,6 +86,8 @@ struct Browser {
     workers: Workers,
     waveforms: Waveforms,
     player: Player,
+    drags: DragWorker,
+    drag_notice: Option<DragNotice>,
     waveform: Option<Arc<Waveform>>,
     wave_generation: u64,
     wave_pending: bool,
@@ -110,11 +116,17 @@ struct Browser {
     input_events: u64,
 }
 
+enum DragNotice {
+    Message(&'static str),
+    Error(String),
+}
+
 impl Browser {
     fn new(
         workers: Workers,
         waveforms: Waveforms,
         player: Player,
+        drags: DragWorker,
         options: Options,
         capture_passed: Arc<AtomicBool>,
     ) -> Self {
@@ -122,6 +134,8 @@ impl Browser {
             workers,
             waveforms,
             player,
+            drags,
+            drag_notice: None,
             waveform: None,
             wave_generation: 0,
             wave_pending: false,
@@ -194,7 +208,28 @@ impl Browser {
         }
     }
 
-    fn accept_events(&mut self) {
+    fn accept_events(&mut self, ctx: &egui::Context) {
+        while let Some(result) = self.drags.poll() {
+            // OLE receives the final mouse release on its own thread. Reset egui
+            // so the next click/drag cannot inherit a stuck pointer or widget ID.
+            ctx.stop_dragging();
+            ctx.input_mut(|input| input.pointer = Default::default());
+            self.drag_notice = Some(match result {
+                Ok(DragOutcome::Accepted) => DragNotice::Message(
+                    "Copy handed to the destination. Check its progress and any conflict prompts.",
+                ),
+                Ok(DragOutcome::Cancelled) => DragNotice::Message("File drag cancelled."),
+                Ok(DragOutcome::Rejected) => DragNotice::Message(
+                    "The destination did not accept the file. Try a writable folder in Explorer.",
+                ),
+                Err(error) => {
+                    if matches!(error, DragError::Native(_) | DragError::Disconnected) {
+                        eprintln!("Native file drag failed: {error}");
+                    }
+                    DragNotice::Error(format!("Could not drag the file: {error}"))
+                }
+            });
+        }
         while let Some(event) = self.workers.try_event() {
             match event {
                 Event::Ready => {
@@ -310,6 +345,23 @@ impl Browser {
             self.audio_error = Some(error.to_string());
         }
         self.selected = Some(sample);
+    }
+
+    fn begin_drag(&mut self, sample: Sample) {
+        if self.selected.as_ref().map(|selected| selected.id) != Some(sample.id) {
+            self.select(sample.clone());
+        }
+        self.drag_notice = match self.drags.request(vec![sample.source]) {
+            Ok(()) => None,
+            Err(error) => {
+                if matches!(error, DragError::Native(_) | DragError::Disconnected) {
+                    eprintln!("Native file drag could not start: {error}");
+                }
+                Some(DragNotice::Error(format!(
+                    "Could not drag the file: {error}"
+                )))
+            }
+        };
     }
 
     fn toggle_preview(&mut self) {
@@ -526,6 +578,18 @@ impl Browser {
         if let Some(message) = &self.error {
             ui.colored_label(Color32::from_rgb(245, 143, 140), message);
         }
+        if self.drags.busy() {
+            ui.label("Dragging a copy. Release in a folder, or press Esc to cancel.");
+        } else if let Some(notice) = &self.drag_notice {
+            match notice {
+                DragNotice::Message(message) => {
+                    ui.label(*message);
+                }
+                DragNotice::Error(message) => {
+                    ui.colored_label(Color32::from_rgb(245, 143, 140), message);
+                }
+            }
+        }
         if let Some(scan) = &self.scan {
             ui.label(format!(
                 "Indexing: {} files saved, {} issues",
@@ -552,7 +616,7 @@ impl Browser {
         }
     }
 
-    fn details(&self, ui: &mut egui::Ui) {
+    fn details(&mut self, ui: &mut egui::Ui) {
         ui.heading("Sound details");
         ui.add_space(12.0);
         if let Some(sample) = &self.selected {
@@ -615,6 +679,18 @@ impl Browser {
                     format!("Metadata unavailable: {error}"),
                 );
             }
+            ui.add_space(12.0);
+            let response = ui.add_enabled(
+                DragWorker::supported() && !self.drags.busy(),
+                egui::Button::new("Drag copy to folder").sense(egui::Sense::click_and_drag()),
+            );
+            let dragged = response
+                .drag_started_by(egui::PointerButton::Primary)
+                .then(|| sample.clone());
+            response.on_hover_text("Hold the left mouse button and drag to an Explorer folder. The source stays in its library.");
+            if let Some(sample) = dragged {
+                self.begin_drag(sample);
+            }
         } else {
             ui.label("Choose a sound to inspect its metadata.");
         }
@@ -626,6 +702,13 @@ impl Browser {
             ui.label(RichText::new("LOCAL LIBRARY").small().weak());
         });
         ui.separator();
+        if DragWorker::supported() {
+            ui.label(
+                RichText::new("Drag a sound to an Explorer folder to copy it.")
+                    .small()
+                    .weak(),
+            );
+        }
         if !self.ready {
             ui.label(if self.error.is_some() {
                 "Catalog unavailable."
@@ -649,6 +732,7 @@ impl Browser {
         }
         let mut needed = BTreeSet::new();
         let selected_id: Option<SampleId> = self.selected.as_ref().map(|sample| sample.id);
+        let mut drag_sample = None;
         egui::ScrollArea::vertical()
             .id_salt(("samples", self.generation))
             .auto_shrink([false, false])
@@ -674,10 +758,19 @@ impl Browser {
                         );
                         let response = ui.add_sized(
                             [ui.available_width(), 32.0],
-                            egui::Button::new(label).selected(selected_id == Some(sample.id)),
+                            sample_button(label, selected_id == Some(sample.id)),
                         );
                         let clicked = response.clicked().then(|| sample.clone());
-                        response.on_hover_text(&sample.display_path);
+                        if DragWorker::supported()
+                            && !self.drags.busy()
+                            && response.drag_started_by(egui::PointerButton::Primary)
+                        {
+                            drag_sample = Some(sample.clone());
+                        }
+                        response.on_hover_text(format!(
+                            "{}\nDrag to a folder to copy the source file.",
+                            sample.display_path
+                        ));
                         if let Some(sample) = clicked {
                             self.select(sample);
                         }
@@ -689,6 +782,9 @@ impl Browser {
                     }
                 }
             });
+        if let Some(sample) = drag_sample {
+            self.begin_drag(sample);
+        }
         for offset in needed {
             self.request_page(offset);
         }
@@ -755,6 +851,12 @@ impl Browser {
     }
 }
 
+fn sample_button(label: String, selected: bool) -> egui::Button<'static> {
+    egui::Button::new(label)
+        .selected(selected)
+        .sense(egui::Sense::click_and_drag())
+}
+
 fn save_capture(path: PathBuf, image: &egui::ColorImage) -> std::io::Result<()> {
     use std::io::Write;
     let mut bytes = format!("P6\n{} {}\n255\n", image.width(), image.height()).into_bytes();
@@ -812,8 +914,8 @@ impl eframe::App for Browser {
             }
         }
     }
-    fn logic(&mut self, _context: &egui::Context, _frame: &mut eframe::Frame) {
-        self.accept_events();
+    fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        self.accept_events(context);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -848,6 +950,67 @@ impl eframe::App for Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_row_separates_click_selection_from_a_primary_drag_and_can_be_reused() {
+        let ctx = egui::Context::default();
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>| {
+            time += 0.02;
+            let mut response = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let row =
+                            ui.add_sized([400.0, 32.0], sample_button("Fixture.wav".into(), false));
+                        response = Some(row);
+                    });
+                },
+            );
+            // This is an interaction test without a renderer.
+            output.textures_delta.clear();
+            response.unwrap()
+        };
+        let first = frame(vec![]);
+        let origin = first.rect.center();
+        let button = |pos, pressed, button| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![
+            egui::Event::PointerMoved(origin),
+            button(origin, true, egui::PointerButton::Primary),
+        ]);
+        let click = frame(vec![button(origin, false, egui::PointerButton::Primary)]);
+        assert!(click.clicked());
+        assert!(!click.drag_started());
+        frame(vec![button(origin, true, egui::PointerButton::Primary)]);
+        let moved = origin + egui::vec2(30.0, 0.0);
+        let drag = frame(vec![egui::Event::PointerMoved(moved)]);
+        assert!(drag.drag_started_by(egui::PointerButton::Primary));
+        assert!(!drag.clicked());
+        // OLE owns the final release; no native pointer-release event arrives in
+        // this simulation. The same reset used by the desktop clears that state.
+        ctx.stop_dragging();
+        ctx.input_mut(|input| input.pointer = Default::default());
+        frame(vec![
+            egui::Event::PointerMoved(origin),
+            button(origin, true, egui::PointerButton::Primary),
+        ]);
+        assert!(frame(vec![button(origin, false, egui::PointerButton::Primary)]).clicked());
+        frame(vec![button(origin, true, egui::PointerButton::Secondary)]);
+        assert!(
+            !frame(vec![egui::Event::PointerMoved(moved)])
+                .drag_started_by(egui::PointerButton::Primary)
+        );
+    }
 
     #[test]
     fn scrolling_back_retains_the_newly_requested_page_and_bounds_the_cache() {

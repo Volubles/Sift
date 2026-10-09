@@ -13,9 +13,19 @@ destination file was published successfully. Do not report it as completed
 export. Application-managed export with explicit conflict planning and per-file
 outcomes remains a separate feature.
 
-Desktop gesture integration follows this adapter checkpoint. The adapter is
-available through the `native-drag` feature, which desktop enables by default.
-Other platforms do not claim outgoing native drag support yet.
+The desktop starts dragging from a library row or the selected sound's
+**Drag copy to folder** control. Hold the left mouse button, move into an Explorer
+folder, and release. Escape cancels. Clicks continue to select sounds; secondary
+button dragging does not start this operation. Busy, cancellation, rejection,
+source failures, and handoff have visible states. After the result, egui clears
+the drag ID and pointer state because OLE receives the final mouse release on
+its own thread. A deterministic interaction test covers click/drag separation
+and reusing the row after that reset.
+
+The adapter is available through the `native-drag` feature, which desktop enables
+by default. It supports multiple references internally; the current desktop
+selects and drags one sound. Other platforms do not claim outgoing native drag
+support yet.
 
 ## Threads, bounds, and native safety
 
@@ -85,6 +95,21 @@ checks remain: release and repeated gestures, Escape, Shift/Ctrl/Alt, existing
 destination names, same-folder drops, missing sources, and playback while
 dragging. Other DAWs/applications, network shares, denied permissions, full disks,
 and batch failure outcomes require their own runtime evidence.
+
+The integrated desktop passes 34 default-feature tests, 23 CLI/core tests with
+default features disabled, formatting, and warning-free Clippy for both those
+configurations. Seven adapter tests also pass with only `native-drag` enabled.
+The explicit Shell target test above passes separately. The default test command
+intentionally skips that Shell integration test and the existing real-audio-device
+test. A release build and native desktop capture with the new drag control pass;
+the capture was visually inspected. These checks do not establish audible output
+or a successful interactive Explorer gesture.
+
+The integrated release resource observation used a 100,000-row synthetic catalog
+for 60 seconds and recorded about 82 MiB private memory with no measurable
+process CPU-time increase. Exit diagnostics recorded input activity, so this is
+not a controlled idle claim. See [resource baseline](BASELINE.md) for the method,
+raw-record context, and unmeasured active-drag/playback scenarios.
 
 ## Primary references
 
