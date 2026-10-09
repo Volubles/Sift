@@ -8,7 +8,8 @@ description = "A resource-efficient local sample browser"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:eframe", "dep:rfd", "playback"]
+desktop = ["dep:eframe", "dep:rfd", "playback", "native-drag"]
+native-drag = ["dep:windows", "dep:windows-core"]
 wgpu-renderer = ["desktop", "eframe/wgpu"]
 playback = ["dep:cpal"]
 
@@ -24,12 +25,15 @@ eframe = { version = "=0.36.2", optional = true, default-features = false, featu
 
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "=0.17.2", optional = true, default-features = false }
+windows-core = { version = "=0.62.2", optional = true }
+windows = { version = "=0.62.2", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 dbg_macro = "deny"

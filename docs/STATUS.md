@@ -77,7 +77,13 @@ Post-preview no-input observation: approximately 77 MiB private bytes over
 were not controlled for interaction; diagnostics detected active input in one.
 The full idle budget and device/codec matrix are not certified from these runs.
 
-Prove native outgoing copy-only dragging into Explorer next, then implement
+The native Windows copy-only adapter is implemented and its actual Shell target
+test copied three disposable WAV files, including Unicode and a long path,
+with unchanged originals. Encoding, bounds, cancellation, and ownership tests
+also pass. See [native drag checkpoint](DRAG-AND-DROP.md). Desktop gestures and
+manual Explorer verification are the next part of this checkpoint.
+
+Integrate native outgoing copy-only dragging into the desktop next, then implement
 project references, folders, and multi-selection. Keep incremental indexing,
 source reconciliation, broader device tests, and performance qualification
 explicit. Sift is still a prototype, not a finished sampler.

@@ -6,6 +6,9 @@ pub mod search;
 pub mod waveform;
 pub mod worker;
 
+#[cfg(feature = "native-drag")]
+pub mod platform;
+
 #[cfg(feature = "desktop")]
 pub mod desktop;
 
