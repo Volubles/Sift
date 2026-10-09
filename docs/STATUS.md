@@ -15,7 +15,13 @@ and architecture documents describe the intended application.
 - [Stack review](STACK-REVIEW.md) covering current UI, storage, audio, and native
   integration alternatives with primary-source evidence and prototype gates.
 
-No `Cargo.toml`, Rust implementation, built application, or CI exists yet.
+- First implementation: Cargo package, pinned Rust 1.98.1, metadata scanner,
+  SQLite/FTS5 catalog, bounded search, lossless native paths, and a runnable CLI.
+- Eleven automated checks cover real WAV metadata, unchanged sources, cancellation,
+  rollback, schema protection, search semantics, paging, and native path encoding.
+
+The desktop UI, playback, projects, and export are not implemented yet. No CI
+configuration exists yet.
 No remote, publishing, or distribution license has been selected.
 
 ## Decisions and open choices
@@ -39,16 +45,18 @@ checkpoint. Git history is the source of current hashes and branch.
 The stack review checked official docs, release-tag source, and current crate
 metadata. It did not install tools or compile candidate frameworks.
 
-No application compilation, playback, native dragging, or performance
-measurement has been performed. Specifications are not runtime proof.
+The core compiles; eleven tests and warning-free Clippy pass. Formatting is
+checked. Playback, native dragging, and application performance have not been
+measured; metadata support must not be presented as playback proof.
+The CLI also indexed generated WAV, FLAC, MP3, and AIFF fixtures without errors;
+all four SHA-256 source hashes were unchanged afterward.
 
 ## Next proposed task
 
-The source-based stack comparison is complete. Once implementation is
-requested, create a minimal Cargo project with a compatible pinned stable
-toolchain. Prove a large virtual list, waveform, preview, and native dragging
-into Explorer. Use disposable fixtures, natural checkpoints, and measurements
-of idle resources, latency, and memory.
+Add the small egui desktop shell with independent index/search workers, a virtual
+list, folder selection, cancellation, and metadata inspection. Then prove
+waveform/preview and native dragging in separate coherent checkpoints. Use
+disposable fixtures and measure idle resources, latency, and memory.
 
 Choose major technical details from that evidence before introducing a full
 analysis pipeline, AI, or a large application framework.

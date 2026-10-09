@@ -1,0 +1,23 @@
+[package]
+name = "sift"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+description = "A resource-efficient local sample browser"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
+symphonia = { version = "=0.6.1", default-features = false, features = ["wav", "aiff", "pcm", "flac", "mp3"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"

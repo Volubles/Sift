@@ -1,8 +1,16 @@
 # Technical direction
 
-This document describes intended architecture. None of the modules exists yet.
-Rust is agreed; validate the proposed libraries in a prototype before recording
-selected versions, alternatives, and reasons.
+This document combines intended architecture and the first implemented slice.
+`library`, `catalog`, and `search` now provide scanning, metadata probing,
+SQLite persistence, and bounded queries; other areas remain planned. Rust 1.98.1,
+rusqlite 0.40.2, and Symphonia 0.6.1 are pinned and verified for this slice.
+
+Catalog schema 1 stores Windows paths as little-endian UTF-16 blobs, preserving
+unpaired surrogates; display text is separate. Locators are platform-specific.
+The first index is additive/updating, with stable IDs for unchanged locations.
+Move/deletion reconciliation, overlapping-root identity, and incremental change
+detection remain later work. Unknown metadata is nullable, and failed probes are
+stored explicitly. Parser reads are limited to 8 MiB per file.
 
 The [stack review](STACK-REVIEW.md) records the 2026-10-09 comparison, including
 Slint/Iced/GPUI, storage alternatives, audio streaming options, and remaining
