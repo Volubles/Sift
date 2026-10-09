@@ -4,15 +4,27 @@ This document describes intended architecture. None of the modules exists yet.
 Rust is agreed; validate the proposed libraries in a prototype before recording
 selected versions, alternatives, and reasons.
 
+The [stack review](STACK-REVIEW.md) records the 2026-10-09 comparison, including
+Slint/Iced/GPUI, storage alternatives, audio streaming options, and remaining
+prototype checks. Keep egui as the first candidate and Slint as the main UI
+alternative; no comparative runtime measurements exist yet.
+
 ## Candidates and decision boundaries
 
 | Area | Candidate | Verify before committing to it |
 | --- | --- | --- |
 | UI | egui/eframe | Resource usage, large lists, waveforms, keyboard interaction, native outgoing drag. |
-| Storage | SQLite with FTS5 and a Rust adapter such as rusqlite | Transactions, migration, search semantics, locking, actual query plans. |
+| Storage | Bundled SQLite with FTS5 through rusqlite | FTS5 availability, transactions, migration, search semantics, locking, actual query plans. |
 | Decoding | Symphonia | Real codec variants, seeking, metadata, and long files. |
 | Audio device | CPAL | Windows devices, sample-rate adaptation, latency, underruns, and device changes. |
-| Windows integration | Small native adapter | Copy-only file transfer, multi-selection, and Explorer conflict behavior. |
+| Resampling | Rubato where needed | Conversion quality, throughput, latency, and rate-change behavior. |
+| Audio transport | rtrb SPSC ring buffer | Capacity, underruns, cancellation, buffer generations, and callback safety. |
+| Windows integration | Small windows-rs adapter | Copy-only file transfer, COM ownership, multi-selection, and Explorer conflict behavior. |
+
+The backend is embedded in the desktop process. Typed commands and results
+connect UI to bounded workers; no local HTTP server or database service is
+part of this design. Evaluate WASAPI shared playback first. Rodio and Creek
+remain audio baselines/alternatives if they meet the same resource contracts.
 
 A modern tool should provide a concrete improvement. Choose a compatible,
 maintained stable toolchain and record its version in `rust-toolchain.toml`
@@ -103,6 +115,10 @@ Distinguish unknown metadata from zero, and errors from pending analysis.
 Index actual filter/sort patterns and inspect query plans for large result sets.
 Version serialized projects and settings.
 
+Define token, prefix, and substring matching explicitly before choosing FTS5
+tokenizers. Verify filename punctuation, Unicode, literal queries, and short
+queries; do not substitute unbounded LIKE scans for indexed search by accident.
+
 ## Indexes, caches, and similarity
 
 Scan in bounded batches. Hash or decode only when required. Size and modification
@@ -141,4 +157,7 @@ Verify documentation against pinned versions when writing code.
 - [SQLite FTS5](https://sqlite.org/fts5.html)
 - [Symphonia](https://github.com/pdeljanov/Symphonia)
 - [CPAL](https://github.com/RustAudio/cpal)
+- [Rubato](https://github.com/HEnquist/rubato)
+- [rtrb](https://github.com/mgeier/rtrb)
+- [windows-rs](https://github.com/microsoft/windows-rs)
 - [Windows Shell transfer](https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios)

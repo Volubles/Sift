@@ -21,6 +21,7 @@ All project documentation and user-visible content are written in English.
 - [Current status](docs/STATUS.md): what exists and the next step.
 - [Product requirements](docs/PRODUCT.md): features, invariants, and acceptance.
 - [Architecture](docs/ARCHITECTURE.md): technical direction and responsibilities.
+- [Stack review](docs/STACK-REVIEW.md): alternatives, evidence, and prototype gates.
 - [Performance](docs/PERFORMANCE.md): provisional budgets and measurement method.
 - [Git conventions](GIT-COMMIT-CONVENTIONS.md): small, natural checkpoints.
 

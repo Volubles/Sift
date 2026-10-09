@@ -12,6 +12,8 @@ and architecture documents describe the intended application.
 - Proposed performance budgets and a reproducible measurement plan.
 - Repository documentation translated to English; English is required for
   product UI and all user-visible content. Conversation remains Swedish.
+- [Stack review](STACK-REVIEW.md) covering current UI, storage, audio, and native
+  integration alternatives with primary-source evidence and prototype gates.
 
 No `Cargo.toml`, Rust implementation, built application, or CI exists yet.
 No remote, publishing, or distribution license has been selected.
@@ -20,9 +22,10 @@ No remote, publishing, or distribution license has been selected.
 
 - Agreed: Rust, efficient local workflow, projects as references, copy-only
   outgoing drag-and-drop, English artifacts, and small checkpoint commits.
-- Initial prototype direction: Windows first, egui/eframe, SQLite/FTS5,
-  Symphonia, CPAL, and a limited Windows adapter. Stack research is in progress;
-  validate candidates before selecting dependency versions.
+- Reviewed prototype direction: Windows first, egui/eframe, bundled SQLite/FTS5
+  through rusqlite, Symphonia, CPAL, Rubato when needed, rtrb, and a limited
+  windows-rs adapter. Slint is the main UI alternative. Validate candidates
+  before selecting dependency versions or claiming comparative performance.
 - Open: visual design, exact format matrix, device/backend support, approved
   sample collection, final performance budgets, and distribution/license.
 - Similarity search is later and optional; AI categorization is outside the core.
@@ -33,12 +36,15 @@ The repository foundation was checked for UTF-8/line endings, local links,
 ignore behavior, and text/binary attributes. Review staged diffs at each
 checkpoint. Git history is the source of current hashes and branch.
 
+The stack review checked official docs, release-tag source, and current crate
+metadata. It did not install tools or compile candidate frameworks.
+
 No application compilation, playback, native dragging, or performance
 measurement has been performed. Specifications are not runtime proof.
 
 ## Next proposed task
 
-Finish the stack comparison before implementation. Once implementation is
+The source-based stack comparison is complete. Once implementation is
 requested, create a minimal Cargo project with a compatible pinned stable
 toolchain. Prove a large virtual list, waveform, preview, and native dragging
 into Explorer. Use disposable fixtures, natural checkpoints, and measurements

@@ -19,6 +19,7 @@ Use the document that matches the task:
 | --- | --- |
 | Features, behavior, or scope | [Product requirements](docs/PRODUCT.md) |
 | Boundaries, storage, threads, or native integration | [Architecture](docs/ARCHITECTURE.md) |
+| Choosing or replacing a framework/backend | [Stack review](docs/STACK-REVIEW.md) |
 | Resource cost, large libraries, or optimization | [Performance](docs/PERFORMANCE.md) |
 | Branches, staging, and checkpoints | [Git conventions](GIT-COMMIT-CONVENTIONS.md) |
 
