@@ -65,6 +65,14 @@ all four SHA-256 source hashes were unchanged afterward.
 
 ## Next proposed task
 
+Named library storage and catalog schema 2 are implemented. Banks and source
+registrations survive index rebuilds; native folder ranges scope search without
+duplicate rows from overlapping roots. Transactional schema-1 migration and
+rollback, bounded folder pages, offline sources, one-time legacy import, and
+unchanged originals have automated coverage. 54 desktop tests pass, together
+with formatting and Clippy. See [Libraries](LIBRARIES.md). The activity rail,
+library sidebar, and desktop worker integration are the next checkpoint.
+
 The first release baseline found excessive private memory with WGPU; a
 controlled Glow comparison reduced it from about 477 to 134 MiB. Glow is now
 the default, with WGPU retained as an optional renderer. See [baseline](BASELINE.md).

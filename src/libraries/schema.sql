@@ -1,0 +1,14 @@
+CREATE TABLE libraries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE TABLE sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    source_path BLOB NOT NULL,
+    UNIQUE(library_id, source_path)
+) STRICT;
+CREATE TABLE settings (key TEXT PRIMARY KEY, value INTEGER NOT NULL) STRICT;
+PRAGMA application_id = 1397115970;
+PRAGMA user_version = 1;

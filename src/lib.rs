@@ -2,6 +2,7 @@ pub mod audio;
 pub mod catalog;
 pub mod collections;
 pub mod config;
+pub mod libraries;
 pub mod library;
 pub mod search;
 pub mod waveform;
@@ -21,7 +22,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Catalog operation failed: {0}")]
     Database(#[from] rusqlite::Error),
-    #[error("Unsupported catalog schema {0}; this application supports schema 1")]
+    #[error("Unsupported catalog schema {0}; this application supports schema 2")]
     UnsupportedSchema(i64),
     #[error("Invalid catalog path encoding")]
     InvalidPath,

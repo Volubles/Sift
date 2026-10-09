@@ -29,9 +29,13 @@ verification. Publishing, licensing, and final visual design remain open.
 
 ## Libraries and indexing
 
-Users can register multiple library roots without importing or copying the
-entire collection. The index stores searchable metadata and source references.
-Removing a root from Sift must not delete its audio.
+Users can create named libraries containing one or more existing source folders
+without importing or copying audio. The library sidebar lists banks above a
+folder browser; the central table shows the selected bank, or a selected folder
+and its descendants. `All files` restores the bank scope. Search stays scoped,
+and switching to Collections preserves the current library view. Removing a
+bank or source registration must not delete its audio. Durable registrations
+remain separate from rebuildable searchable metadata.
 
 An initial scan shows genuine progress, errors, and pause/cancel controls.
 Later scans primarily process changed files. Define behavior for symbolic-link
