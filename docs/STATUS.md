@@ -65,6 +65,11 @@ The first release baseline found excessive private memory with WGPU; a
 controlled Glow comparison reduced it from about 477 to 134 MiB. Glow is now
 the default, with WGPU retained as an optional renderer. See [baseline](BASELINE.md).
 
+Audio foundation is now implemented: cancellable packet decoding, accurate
+seeking, bounded stereo conversion, rate conversion, generation-tagged transport,
+and a bounded waveform analyzer/cache. Twenty-three headless tests pass; device
+output and UI controls are the next integration slice and are not verified yet.
+
 Implement waveform analysis and controlled preview playback next. Prove seeking,
 cancellation, device recovery, and native outgoing dragging in coherent
 checkpoints. Use disposable fixtures and measure idle resources, latency, and
