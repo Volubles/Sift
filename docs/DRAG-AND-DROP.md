@@ -16,8 +16,11 @@ outcomes remains a separate feature.
 The desktop starts dragging from a library row or the selected sound's
 **Drag copy to folder** control. Hold the left mouse button, move into an Explorer
 folder, and release. Escape cancels. Clicks continue to select sounds; secondary
-button dragging does not start this operation. Busy, cancellation, rejection,
-source failures, and handoff have visible states. After the result, egui clears
+button dragging does not start this operation. Preparation and active dragging
+have visible states. Acceptance, Escape, and unsuitable destinations end quietly
+without a persistent banner or a notification timer. Actual source/native
+failures remain visible with **Dismiss**, or clear when a new drag starts.
+After the result, egui clears
 the drag ID and pointer state because OLE consumes the final release in its
 modal loop. A deterministic interaction test covers click/drag separation
 and reusing the row after that reset.
@@ -45,6 +48,11 @@ support yet.
   the same input thread. Late starts after left-button release or while Escape
   is pressed are cancelled. Preparation supports Escape, mouse release, and
   **Cancel file drag**; native OLE handles Escape during the actual gesture.
+- On release, the source checks the window under the cursor. A window owned by
+  this Sift process, or no valid window, cancels before `IDropTarget::Drop` can
+  run. This prevents winit's generic incoming file handler from accepting a
+  self-drop. External targets still negotiate copy support; another application
+  may accept the file for import. A target that does not accept it ends quietly.
 - Shutdown cancels the pending job, disconnects queues, joins preparation,
   clears the HWND callback pointer, and destroys only the owned message window.
   A callback retains its thread-local state through nested events. Final native
@@ -108,9 +116,11 @@ destination names, same-folder drops, missing sources, and playback while
 dragging. Other DAWs/applications, network shares, denied permissions, full disks,
 and batch failure outcomes require their own runtime evidence.
 
-The repaired desktop passes 37 default-feature tests, formatting, and warning-
+The desktop passes 38 default-feature tests, formatting, and warning-
 free Clippy. The earlier CLI/core checkpoint passed 23 tests with default
-features disabled. Ten adapter tests pass with only `native-drag` enabled.
+features disabled. Native tests include an actual owned HWND and an invalid
+window handle: both release decisions cancel before any target drop. The prior
+adapter-only configuration passed ten checks.
 The explicit Shell target test above passes separately. The default test command
 intentionally skips that Shell integration test and the existing real-audio-device
 test. A release build and native desktop capture with the new drag control pass;

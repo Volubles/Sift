@@ -108,6 +108,14 @@ Sift-to-Explorer physical mouse gestures, repeated drops, modifiers, conflicts,
 and playback during dragging still need runtime verification. Do not claim
 that full flow from the queue/Shell tests alone.
 
+Drag feedback now ends quietly after acceptance, Escape, or an unsuitable target;
+routine completion/cancellation banners are removed. Source/native failures stay
+visible and can be dismissed. Releasing over this Sift process's windows (or no
+valid window) cancels before a target drop, including winit's generic incoming
+handler. The follow-up manual report reaches the handoff message; it does not
+independently verify destination contents. The new native owned-window regression,
+38 default-feature tests, actual Shell copying, formatting, and Clippy pass.
+
 The integrated drag build's 60-second resource observation recorded about 82 MiB
 private memory and no measurable CPU-time increase. Input events were recorded;
 this is not a controlled idle qualification. See [baseline](BASELINE.md).

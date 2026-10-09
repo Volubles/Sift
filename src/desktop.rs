@@ -12,7 +12,7 @@ use eframe::egui::{self, Color32, RichText};
 use crate::audio::{player::Player, transport};
 use crate::catalog::{Sample, SampleId, SearchPage};
 use crate::library::ScanReport;
-use crate::platform::{DragError, DragOutcome, DragWorker};
+use crate::platform::{DragError, DragWorker};
 use crate::search::{PAGE_SIZE, SearchQuery};
 use crate::waveform::{Waveform, Waveforms};
 use crate::worker::{Event, Workers};
@@ -87,7 +87,7 @@ struct Browser {
     waveforms: Waveforms,
     player: Player,
     drags: DragWorker,
-    drag_notice: Option<DragNotice>,
+    drag_error: Option<String>,
     waveform: Option<Arc<Waveform>>,
     wave_generation: u64,
     wave_pending: bool,
@@ -116,11 +116,6 @@ struct Browser {
     input_events: u64,
 }
 
-enum DragNotice {
-    Message(&'static str),
-    Error(String),
-}
-
 impl Browser {
     fn new(
         workers: Workers,
@@ -135,7 +130,7 @@ impl Browser {
             waveforms,
             player,
             drags,
-            drag_notice: None,
+            drag_error: None,
             waveform: None,
             wave_generation: 0,
             wave_pending: false,
@@ -214,14 +209,10 @@ impl Browser {
             // so the next click/drag cannot inherit a stuck pointer or widget ID.
             ctx.stop_dragging();
             ctx.input_mut(|input| input.pointer = Default::default());
-            self.drag_notice = Some(match result {
-                Ok(DragOutcome::Accepted) => DragNotice::Message(
-                    "Copy handed to the destination. Check its progress and any conflict prompts.",
-                ),
-                Ok(DragOutcome::Cancelled) => DragNotice::Message("File drag cancelled."),
-                Ok(DragOutcome::Rejected) => DragNotice::Message(
-                    "The destination did not accept the file. Try a writable folder in Explorer.",
-                ),
+            self.drag_error = match result {
+                // Acceptance, Escape, and unsuitable drop locations are ordinary
+                // gesture completion; only actual failures need a notification.
+                Ok(_) => None,
                 Err(error) => {
                     if matches!(
                         error,
@@ -229,9 +220,9 @@ impl Browser {
                     ) {
                         eprintln!("Native file drag failed: {error}");
                     }
-                    DragNotice::Error(format!("Could not drag the file: {error}"))
+                    Some(format!("Could not drag the file: {error}"))
                 }
-            });
+            };
         }
         while let Some(event) = self.workers.try_event() {
             match event {
@@ -354,7 +345,7 @@ impl Browser {
         if self.selected.as_ref().map(|selected| selected.id) != Some(sample.id) {
             self.select(sample.clone());
         }
-        self.drag_notice = match self.drags.request(vec![sample.source]) {
+        self.drag_error = match self.drags.request(vec![sample.source]) {
             Ok(()) => None,
             Err(error) => {
                 if matches!(
@@ -363,9 +354,7 @@ impl Browser {
                 ) {
                     eprintln!("Native file drag could not start: {error}");
                 }
-                Some(DragNotice::Error(format!(
-                    "Could not drag the file: {error}"
-                )))
+                Some(format!("Could not drag the file: {error}"))
             }
         };
     }
@@ -595,14 +584,15 @@ impl Browser {
                     self.drags.cancel();
                 }
             });
-        } else if let Some(notice) = &self.drag_notice {
-            match notice {
-                DragNotice::Message(message) => {
-                    ui.label(*message);
-                }
-                DragNotice::Error(message) => {
+        } else if let Some(message) = &self.drag_error {
+            let dismiss = ui
+                .horizontal(|ui| {
                     ui.colored_label(Color32::from_rgb(245, 143, 140), message);
-                }
+                    ui.small_button("Dismiss").clicked()
+                })
+                .inner;
+            if dismiss {
+                self.drag_error = None;
             }
         }
         if let Some(scan) = &self.scan {

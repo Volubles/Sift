@@ -239,6 +239,19 @@ mod tests {
     use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW};
 
     #[test]
+    fn releases_over_owned_windows_or_no_window_cancel_before_a_drop() {
+        let host = DragHost::new(Arc::new(|| {})).unwrap();
+        assert_eq!(
+            super::super::release_over_window(host.window),
+            windows::Win32::Foundation::DRAGDROP_S_CANCEL
+        );
+        assert_eq!(
+            super::super::release_over_window(HWND::default()),
+            windows::Win32::Foundation::DRAGDROP_S_CANCEL
+        );
+    }
+
+    #[test]
     fn native_start_is_deferred_to_the_owner_queue_and_cancelled_jobs_clear_busy_state() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("source.wav");

@@ -13,8 +13,8 @@ use windows::Win32::{
     Foundation::{
         DATA_S_SAMEFORMATETC, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS,
         DV_E_DVASPECT, DV_E_FORMATETC, DV_E_LINDEX, DV_E_TYMED, E_INVALIDARG, E_NOTIMPL,
-        ERROR_SUCCESS, GetLastError, GlobalFree, HGLOBAL, OLE_E_ADVISENOTSUPPORTED, S_OK,
-        SetLastError,
+        ERROR_SUCCESS, GetLastError, GlobalFree, HGLOBAL, HWND, OLE_E_ADVISENOTSUPPORTED, POINT,
+        S_OK, SetLastError,
     },
     System::{
         Com::{
@@ -28,12 +28,14 @@ use windows::Win32::{
             IDropSource_Impl, OleInitialize, OleUninitialize,
         },
         SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS},
+        Threading::GetCurrentProcessId,
     },
     UI::{
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, GetCapture, ReleaseCapture, VK_ESCAPE, VK_LBUTTON,
         },
         Shell::{CFSTR_PREFERREDDROPEFFECT, DROPFILES, SHCreateStdEnumFmtEtc},
+        WindowsAndMessaging::{GetCursorPos, GetWindowThreadProcessId, WindowFromPoint},
     },
 };
 use windows_core::{BOOL, HRESULT, Ref, implement};
@@ -425,7 +427,13 @@ impl IDropSource_Impl for CopySource_Impl {
         if escape.as_bool() || self.cancelled.load(Ordering::Acquire) {
             DRAGDROP_S_CANCEL
         } else if keys.0 & MK_LBUTTON.0 == 0 {
-            DRAGDROP_S_DROP
+            let mut point = POINT::default();
+            // SAFETY: point is writable for the call; WindowFromPoint inspects
+            // the visible window under the release without changing any input.
+            if let Err(error) = unsafe { GetCursorPos(&mut point) } {
+                return error.code();
+            }
+            release_over_window(unsafe { WindowFromPoint(point) })
         } else {
             S_OK
         }
@@ -433,6 +441,19 @@ impl IDropSource_Impl for CopySource_Impl {
 
     fn GiveFeedback(&self, _: DROPEFFECT) -> HRESULT {
         DRAGDROP_S_USEDEFAULTCURSORS
+    }
+}
+
+fn release_over_window(window: HWND) -> HRESULT {
+    let mut process = 0;
+    // SAFETY: Win32 validates the window handle and writes only this u32 output.
+    // Invalid/no windows have no drop receiver. Cancellation in our own process
+    // prevents winit's incoming file handler from accepting a self-drop.
+    let thread = unsafe { GetWindowThreadProcessId(window, Some(&mut process)) };
+    if thread == 0 || process == unsafe { GetCurrentProcessId() } {
+        DRAGDROP_S_CANCEL
+    } else {
+        DRAGDROP_S_DROP
     }
 }
 
