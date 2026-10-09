@@ -1,14 +1,14 @@
 # Sift
 
 Sift is a local sample browser for sound effects, samples, and music files.
-It aims to provide fast search, responsive audio previews, and projects for
+It provides fast search, responsive audio previews, and collections for
 collecting sounds and copying them into other folders. Low CPU and memory use
 are core requirements.
 
 The prototype provides a native Windows metadata browser and a CLI. It indexes
 chosen folders into bundled SQLite/FTS5, searches bounded result pages, and
-shows audio metadata, waveforms, controlled audio preview, and outgoing copy-only
-file dragging on Windows. Projects are later checkpoints; this is not a finished
+shows a compact audio table, waveforms, controlled audio preview, saved collections,
+and outgoing copy-only file dragging on Windows. This is not a finished
 application.
 
 Development uses small, coherent Conventional Commits at natural checkpoints.
@@ -44,15 +44,22 @@ cargo fmt --all -- --check
 
 The desktop opens by default. Use **Add folder** to choose a library; **Ctrl+F**
 focuses search. Click a sound to inspect its metadata and waveform. Play/Pause,
-Space, Stop, volume, and waveform clicking control the preview. Hold the left
+Space, Stop, volume, waveform clicking, and **Auto-play** control the preview.
+Use **Collections +** to create a saved selection; right-click its name to rename
+or delete it. **Add selected sound** or drag a library row onto a collection name
+to add a reference. Click a saved sound to preview it; right-click to remove its
+reference. Changes save automatically. **Details** toggles the metadata panel.
+Hold the left
 mouse button on a library row or **Drag copy to folder**, move into an Explorer
 folder, and release to offer a copy. Escape cancels the drag. Explorer handles
-file conflicts and copying progress; Sift reports the handoff. Scanning can be
+file conflicts and copying progress. Completed/cancelled drags end quietly. Scanning can be
 cancelled, and search runs independently from indexing. Selection is currently
 single-item.
 
 On Windows the catalog lives in `%LOCALAPPDATA%\Sift\catalog.sqlite`; it is
-independent of the executable and working directory. Override with
+independent of the executable and working directory. Collections are stored
+separately in `catalog.collections.sqlite`, preserving references through index
+rebuilds. Override with
 `--database PATH` for isolated experiments. The CLI-only configuration is
 available through `cargo run --locked --no-default-features -- index FOLDER`.
 
@@ -68,7 +75,7 @@ The prototype uses egui/eframe 0.36.2, the Glow renderer, and RFD 0.17.2 for the
 Windows folder dialog. See [checkpoint verification](docs/CHECKPOINT.md).
 
 Current scans refresh metadata but do not reconcile deleted/moved files or skip
-unchanged files yet. Projects, tags, multi-selection, and application-managed
+unchanged files yet. Collection folders/reordering, tags, multi-selection, and application-managed
 folder export are not implemented. Do not treat indexed metadata as verified
 decoder/playback support.
 
@@ -77,3 +84,6 @@ cache limits, and remaining checks. Source files remain unchanged.
 
 See [native drag verification](docs/DRAG-AND-DROP.md) for transfer limits,
 actual Windows Shell copying evidence, and the remaining manual Explorer checks.
+
+See [Collections](docs/COLLECTIONS.md) for durable storage, source availability,
+save-failure recovery, UI verification, and remaining checks.

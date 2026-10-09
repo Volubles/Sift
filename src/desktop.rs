@@ -11,11 +11,23 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::audio::{player::Player, transport};
 use crate::catalog::{Sample, SampleId, SearchPage};
+use crate::collections::{
+    Availability, Entry, EntryId, Reference, worker::Worker as CollectionWorker,
+};
 use crate::library::ScanReport;
 use crate::platform::{DragError, DragWorker};
 use crate::search::{PAGE_SIZE, SearchQuery};
 use crate::waveform::{Waveform, Waveforms};
 use crate::worker::{Event, Workers};
+
+mod collections;
+use collections::{Action as CollectionAction, Collections};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SoundKey {
+    Library(SampleId),
+    Collection(EntryId),
+}
 
 pub struct Options {
     pub database: PathBuf,
@@ -53,11 +65,17 @@ pub fn run(options: Options) -> eframe::Result {
             let player = Player::start(move || audio_context.request_repaint())?;
             let drag_context = context.clone();
             let drags = DragWorker::start(move || drag_context.request_repaint())?;
+            let collection_context = context.clone();
+            let collection_worker = CollectionWorker::start(
+                crate::collections::data_path(&options.database),
+                move || collection_context.request_repaint(),
+            )?;
             Ok(Box::new(Browser::new(
                 workers,
                 waveforms,
                 player,
                 drags,
+                Collections::new(collection_worker),
                 options,
                 capture_passed,
             )))
@@ -87,6 +105,7 @@ struct Browser {
     waveforms: Waveforms,
     player: Player,
     drags: DragWorker,
+    collections: Collections,
     drag_error: Option<String>,
     waveform: Option<Arc<Waveform>>,
     wave_generation: u64,
@@ -105,7 +124,11 @@ struct Browser {
     error: Option<String>,
     scan: Option<ScanReport>,
     scan_summary: Option<ScanReport>,
-    selected: Option<Sample>,
+    selected: Option<Reference>,
+    selected_key: Option<SoundKey>,
+    selected_availability: Availability,
+    show_details: bool,
+    auto_play: bool,
     folder: Option<PathBuf>,
     smoke: Option<PathBuf>,
     screenshot_requested: bool,
@@ -122,6 +145,7 @@ impl Browser {
         waveforms: Waveforms,
         player: Player,
         drags: DragWorker,
+        collections: Collections,
         options: Options,
         capture_passed: Arc<AtomicBool>,
     ) -> Self {
@@ -130,6 +154,7 @@ impl Browser {
             waveforms,
             player,
             drags,
+            collections,
             drag_error: None,
             waveform: None,
             wave_generation: 0,
@@ -149,6 +174,10 @@ impl Browser {
             scan: None,
             scan_summary: None,
             selected: None,
+            selected_key: None,
+            selected_availability: Availability::Ready,
+            show_details: false,
+            auto_play: false,
             folder: options.folder,
             smoke: options.smoke_screenshot,
             screenshot_requested: false,
@@ -204,10 +233,18 @@ impl Browser {
     }
 
     fn accept_events(&mut self, ctx: &egui::Context) {
+        self.collections.poll();
+        if let Some(SoundKey::Collection(id)) = self.selected_key
+            && let Some(entry) = self.collections.selected_update(id)
+            && self.selected_availability != entry.availability
+        {
+            self.selected_availability = entry.availability.clone();
+        }
         while let Some(result) = self.drags.poll() {
             // OLE consumes the final mouse release in its modal loop. Reset egui
             // so the next click/drag cannot inherit a stuck pointer or widget ID.
             ctx.stop_dragging();
+            egui::DragAndDrop::clear_payload(ctx);
             ctx.input_mut(|input| input.pointer = Default::default());
             self.drag_error = match result {
                 // Acceptance, Escape, and unsuitable drop locations are ordinary
@@ -238,16 +275,14 @@ impl Browser {
                     Ok(page) => {
                         self.total = page.total;
                         self.pending.remove(&page.offset);
-                        if let Some(selected) = &self.selected {
-                            if let Some(updated) =
-                                page.rows.iter().find(|row| row.id == selected.id)
-                            {
-                                self.selected = Some(updated.clone());
+                        if let Some(SoundKey::Library(id)) = self.selected_key {
+                            if let Some(updated) = page.rows.iter().find(|row| row.id == id) {
+                                self.selected = Some(Reference::from(updated));
                             }
-                        } else {
-                            if let Some(sample) = page.rows.first().cloned() {
-                                self.select(sample);
-                            }
+                        } else if self.selected.is_none()
+                            && let Some(sample) = page.rows.first().cloned()
+                        {
+                            self.select_sample(sample);
                         }
                         insert_page(&mut self.pages, page);
                     }
@@ -312,16 +347,35 @@ impl Browser {
         }
     }
 
-    fn select(&mut self, sample: Sample) {
-        let autoplay = matches!(
-            self.player.snapshot().phase,
-            transport::PLAYING | transport::LOADING
+    fn select_sample(&mut self, sample: Sample) {
+        self.select(
+            Reference::from(&sample),
+            SoundKey::Library(sample.id),
+            Availability::Ready,
         );
+    }
+
+    fn select_entry(&mut self, entry: Entry) {
+        self.select(
+            entry.reference,
+            SoundKey::Collection(entry.id),
+            entry.availability,
+        );
+    }
+
+    fn select(&mut self, sample: Reference, key: SoundKey, availability: Availability) {
+        let autoplay = self.auto_play;
         self.wave_generation += 1;
         self.waveform = None;
-        self.wave_error = None;
+        self.wave_error = match &availability {
+            Availability::Missing => {
+                Some("Source file is missing; the saved reference is retained".into())
+            }
+            Availability::Unavailable(error) => Some(format!("Source unavailable: {error}")),
+            _ => None,
+        };
         self.audio_error = None;
-        self.wave_pending = sample.metadata_error.is_none();
+        self.wave_pending = sample.metadata_error.is_none() && availability.usable();
         if self.wave_pending
             && let Err(error) = self
                 .waveforms
@@ -330,7 +384,7 @@ impl Browser {
             self.wave_error = Some(error.to_string());
             self.wave_pending = false;
         }
-        let result = if autoplay && sample.metadata_error.is_none() {
+        let result = if autoplay && sample.metadata_error.is_none() && availability.usable() {
             self.player.play(sample.source.clone(), 0.0)
         } else {
             self.player.stop()
@@ -339,12 +393,11 @@ impl Browser {
             self.audio_error = Some(error.to_string());
         }
         self.selected = Some(sample);
+        self.selected_key = Some(key);
+        self.selected_availability = availability;
     }
 
-    fn begin_drag(&mut self, sample: Sample) {
-        if self.selected.as_ref().map(|selected| selected.id) != Some(sample.id) {
-            self.select(sample.clone());
-        }
+    fn begin_drag(&mut self, sample: Reference) {
         self.drag_error = match self.drags.request(vec![sample.source]) {
             Ok(()) => None,
             Err(error) => {
@@ -363,7 +416,7 @@ impl Browser {
         let Some(sample) = &self.selected else {
             return;
         };
-        if sample.metadata_error.is_some() {
+        if sample.metadata_error.is_some() || !self.selected_availability.usable() {
             return;
         }
         let result = match self.player.snapshot().phase {
@@ -381,13 +434,15 @@ impl Browser {
         let available = self
             .selected
             .as_ref()
-            .is_some_and(|sample| sample.metadata_error.is_none());
+            .is_some_and(|sample| sample.metadata_error.is_none())
+            && self.selected_availability.usable();
         ui.horizontal(|ui| {
             let label = if matches!(snapshot.phase, transport::PLAYING | transport::LOADING) {
                 "Pause"
             } else {
                 "Play"
             };
+            ui.checkbox(&mut self.auto_play, "Auto-play");
             if ui
                 .add_enabled(available, egui::Button::new(label))
                 .clicked()
@@ -520,6 +575,7 @@ impl Browser {
             ui.add_space(12.0);
             ui.label(RichText::new("Your sounds, within reach.").weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.toggle_value(&mut self.show_details, "Details");
                 if ui
                     .add_enabled(
                         cfg!(windows) && self.ready && self.scan.is_none(),
@@ -677,6 +733,27 @@ impl Browser {
             ui.add_space(18.0);
             ui.label(RichText::new("SOURCE").small().weak());
             ui.label(sample.source.display().to_string());
+            match &self.selected_availability {
+                Availability::Changed => {
+                    ui.colored_label(
+                        Color32::from_rgb(230, 184, 115),
+                        "Source changed. Metadata is from the saved reference.",
+                    );
+                }
+                Availability::Missing => {
+                    ui.colored_label(
+                        Color32::from_rgb(245, 143, 140),
+                        "Source file is missing. The saved reference is retained.",
+                    );
+                }
+                Availability::Unavailable(error) => {
+                    ui.colored_label(
+                        Color32::from_rgb(245, 143, 140),
+                        format!("Source unavailable: {error}"),
+                    );
+                }
+                Availability::Ready => {}
+            }
             if let Some(error) = &sample.metadata_error {
                 ui.add_space(12.0);
                 ui.colored_label(
@@ -694,7 +771,7 @@ impl Browser {
                 .then(|| sample.clone());
             response.on_hover_text("Hold the left mouse button and drag to an Explorer folder. The source stays in its library.");
             if let Some(sample) = dragged {
-                self.begin_drag(sample);
+                egui::DragAndDrop::set_payload(ui.ctx(), sample);
             }
         } else {
             ui.label("Choose a sound to inspect its metadata.");
@@ -709,7 +786,7 @@ impl Browser {
         ui.separator();
         if DragWorker::supported() {
             ui.label(
-                RichText::new("Drag a sound to an Explorer folder to copy it.")
+                RichText::new("Drag to a collection to save it, or out to a folder to copy it.")
                     .small()
                     .weak(),
             );
@@ -736,12 +813,16 @@ impl Browser {
             return;
         }
         let mut needed = BTreeSet::new();
-        let selected_id: Option<SampleId> = self.selected.as_ref().map(|sample| sample.id);
+        let selected_id = match self.selected_key {
+            Some(SoundKey::Library(id)) => Some(id),
+            _ => None,
+        };
         let mut drag_sample = None;
+        table_heading(ui);
         egui::ScrollArea::vertical()
             .id_salt(("samples", self.generation))
             .auto_shrink([false, false])
-            .show_rows(ui, 32.0, self.total, |ui, range| {
+            .show_rows(ui, 28.0, self.total, |ui, range| {
                 for index in range {
                     let offset = index / PAGE_SIZE * PAGE_SIZE;
                     needed.insert(offset);
@@ -751,20 +832,7 @@ impl Browser {
                         .find(|page| page.offset == offset)
                         .and_then(|page| page.rows.get(index - offset))
                     {
-                        let label = format!(
-                            "{}    {}    {}",
-                            sample.name,
-                            sample.format.to_uppercase(),
-                            sample
-                                .audio
-                                .duration_seconds
-                                .map(|value| format!("{value:.2} s"))
-                                .unwrap_or_else(|| "Unknown duration".into())
-                        );
-                        let response = ui.add_sized(
-                            [ui.available_width(), 32.0],
-                            sample_button(label, selected_id == Some(sample.id)),
-                        );
+                        let response = table_row(ui, sample, selected_id == Some(sample.id), index);
                         let clicked = response.clicked().then(|| sample.clone());
                         if DragWorker::supported()
                             && !self.drags.busy()
@@ -773,11 +841,11 @@ impl Browser {
                             drag_sample = Some(sample.clone());
                         }
                         response.on_hover_text(format!(
-                            "{}\nDrag to a folder to copy the source file.",
+                            "{}\nDrag to a collection, or out to copy the source file.",
                             sample.display_path
                         ));
                         if let Some(sample) = clicked {
-                            self.select(sample);
+                            self.select_sample(sample);
                         }
                     } else {
                         ui.add_sized(
@@ -788,7 +856,9 @@ impl Browser {
                 }
             });
         if let Some(sample) = drag_sample {
-            self.begin_drag(sample);
+            let reference = Reference::from(&sample);
+            self.select_sample(sample);
+            egui::DragAndDrop::set_payload(ui.ctx(), reference);
         }
         for offset in needed {
             self.request_page(offset);
@@ -800,6 +870,7 @@ impl Browser {
             return;
         };
         if self.ready
+            && self.collections.settled()
             && self.scan.is_none()
             && !self.wave_pending
             && !self.pages.is_empty()
@@ -860,6 +931,93 @@ fn sample_button(label: String, selected: bool) -> egui::Button<'static> {
     egui::Button::new(label)
         .selected(selected)
         .sense(egui::Sense::click_and_drag())
+}
+
+fn table_heading(ui: &mut egui::Ui) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+    paint_columns(
+        ui,
+        rect,
+        &[
+            "Filename".into(),
+            "Format".into(),
+            "Length".into(),
+            "Rate".into(),
+            "Ch".into(),
+        ],
+        Color32::GRAY,
+    );
+    ui.separator();
+}
+
+fn table_row(ui: &mut egui::Ui, sound: &Sample, selected: bool, index: usize) -> egui::Response {
+    let response = ui.add_sized(
+        [ui.available_width(), 28.0],
+        sample_button(String::new(), selected),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            selected,
+            &sound.name,
+        )
+    });
+    if !selected && !response.hovered() && index.is_multiple_of(2) {
+        ui.painter()
+            .rect_filled(response.rect, 0.0, Color32::from_rgb(37, 39, 40));
+    }
+    let columns = [
+        sound.name.clone(),
+        sound.format.to_uppercase(),
+        sound
+            .audio
+            .duration_seconds
+            .map(|seconds| format!("{seconds:.2} s"))
+            .unwrap_or_else(|| "—".into()),
+        sound
+            .audio
+            .sample_rate
+            .map(|rate| rate.to_string())
+            .unwrap_or_else(|| "—".into()),
+        sound
+            .audio
+            .channels
+            .map(|channels| channels.to_string())
+            .unwrap_or_else(|| "—".into()),
+    ];
+    paint_columns(
+        ui,
+        response.rect,
+        &columns,
+        if selected {
+            Color32::WHITE
+        } else {
+            Color32::from_gray(210)
+        },
+    );
+    response
+}
+
+fn paint_columns(ui: &egui::Ui, rect: egui::Rect, values: &[String; 5], color: Color32) {
+    let widths = [(rect.width() - 280.0).max(80.0), 60.0, 80.0, 90.0, 50.0];
+    let mut x = rect.left();
+    for (value, width) in values.iter().zip(widths) {
+        let cell =
+            egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(width, rect.height()))
+                .intersect(rect);
+        ui.painter()
+            .with_clip_rect(cell.shrink2(egui::vec2(6.0, 0.0)))
+            .text(
+                egui::pos2(x + 8.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                value,
+                egui::FontId::proportional(13.0),
+                color,
+            );
+        x += width;
+    }
 }
 
 fn save_capture(path: PathBuf, image: &egui::ColorImage) -> std::io::Result<()> {
@@ -933,22 +1091,68 @@ impl eframe::App for Browser {
         {
             self.drags.cancel();
         }
-        egui::Panel::top("header").show(ui, |ui| self.header(ui));
         egui::Panel::bottom("footer").show(ui, |ui| {
             ui.label(
                 RichText::new(
-                    "Source files stay in their original folders. Your library is saved locally.",
+                    "Source files stay in place. Collections save references automatically.",
                 )
                 .small()
                 .weak(),
             );
         });
-        egui::Panel::bottom("preview").show(ui, |ui| self.preview(ui));
-        egui::Panel::right("details")
+        egui::Panel::left("collections")
             .resizable(true)
-            .default_size(300.0)
-            .show(ui, |ui| self.details(ui));
+            .default_size(260.0)
+            .show(ui, |ui| {
+                let selected_entry = match self.selected_key {
+                    Some(SoundKey::Collection(id)) => Some(id),
+                    _ => None,
+                };
+                if let Some(action) =
+                    self.collections
+                        .ui(ui, self.selected.as_ref(), selected_entry)
+                {
+                    match action {
+                        CollectionAction::Select(entry) => self.select_entry(entry),
+                        CollectionAction::Drag(entry) => {
+                            let reference = entry.reference.clone();
+                            self.select_entry(entry);
+                            egui::DragAndDrop::set_payload(&ctx, reference);
+                        }
+                    }
+                }
+            });
+        egui::Panel::top("header").show(ui, |ui| self.header(ui));
+        egui::Panel::top("preview").show(ui, |ui| self.preview(ui));
+        if self.show_details {
+            egui::Panel::right("details")
+                .resizable(true)
+                .default_size(300.0)
+                .show(ui, |ui| self.details(ui));
+        }
         egui::CentralPanel::default().show(ui, |ui| self.list(ui));
+        if !self.drags.busy()
+            && DragWorker::supported()
+            && ctx.input(external_drag_requested)
+            && let Some(reference) = egui::DragAndDrop::take_payload::<Reference>(&ctx)
+        {
+            self.begin_drag((*reference).clone());
+        }
+        if let Some(reference) = egui::DragAndDrop::payload::<Reference>(&ctx)
+            && let Some(position) = ctx.pointer_interact_pos()
+        {
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Tooltip,
+                egui::Id::new("sound-drag-label"),
+            ));
+            painter.text(
+                position + egui::vec2(16.0, 18.0),
+                egui::Align2::LEFT_TOP,
+                &reference.name,
+                egui::FontId::proportional(13.0),
+                Color32::from_rgb(135, 222, 194),
+            );
+        }
         if !ctx.egui_wants_keyboard_input()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
         {
@@ -958,9 +1162,92 @@ impl eframe::App for Browser {
     }
 }
 
+fn external_drag_requested(input: &egui::InputState) -> bool {
+    input.pointer.button_down(egui::PointerButton::Primary)
+        && (input
+            .pointer
+            .latest_pos()
+            .is_some_and(|position| !input.content_rect().contains(position))
+            || input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::PointerGone)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn internal_sound_drop_reaches_the_collection_before_payload_cleanup() {
+        let ctx = egui::Context::default();
+        let reference = Reference {
+            source: PathBuf::from("fixture.wav"),
+            name: "fixture.wav".into(),
+            display_path: "fixture.wav".into(),
+            format: "wav".into(),
+            size_bytes: 7,
+            audio: Default::default(),
+            metadata_error: None,
+        };
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>| {
+            time += 0.02;
+            let mut geometry = None;
+            let mut received = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let source =
+                            ui.add_sized([400.0, 28.0], sample_button("Sound".into(), false));
+                        if source.drag_started_by(egui::PointerButton::Primary) {
+                            source.dnd_set_drag_payload(reference.clone());
+                        }
+                        let target = ui.add_sized([400.0, 28.0], egui::Button::new("Collection"));
+                        received = target.dnd_release_payload::<Reference>();
+                        geometry = Some((source.rect.center(), target.rect.center()));
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (geometry.unwrap(), received)
+        };
+        let ((source, target), _) = frame(vec![]);
+        let button = |position, pressed| egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![
+            egui::Event::PointerMoved(source),
+            button(source, true),
+        ]);
+        frame(vec![egui::Event::PointerMoved(
+            source + egui::vec2(30.0, 0.0),
+        )]);
+        assert!(egui::DragAndDrop::payload::<Reference>(&ctx).is_some());
+        assert!(!ctx.input(external_drag_requested));
+        frame(vec![egui::Event::PointerMoved(target)]);
+        let (_, received) = frame(vec![button(target, false)]);
+        assert_eq!(received.unwrap().source, reference.source);
+        assert!(egui::DragAndDrop::payload::<Reference>(&ctx).is_none());
+        frame(vec![
+            egui::Event::PointerMoved(source),
+            button(source, true),
+        ]);
+        frame(vec![egui::Event::PointerMoved(egui::pos2(810.0, 100.0))]);
+        assert!(ctx.input(external_drag_requested));
+    }
 
     #[test]
     fn sound_row_separates_click_selection_from_a_primary_drag_and_can_be_reused() {

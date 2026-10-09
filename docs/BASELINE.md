@@ -66,6 +66,23 @@ Shell copy memory, and simultaneous playback resource costs were not measured.
 The raw report records the adapter checkpoint plus the dirty desktop integration
 working tree and is ignored under `benchmarks/results/`.
 
+## Collections observations
+
+The Collections release was observed with the same 100,000-row synthetic catalog
+and an empty durable collection store. A 60.37-second run recorded 86.15 MiB mean
+private bytes (87.11 MiB peak), 80.53 MiB working set, and 1.040% machine CPU.
+Its diagnostics recorded 3,570 frames and 13,726 input events, so this was active
+interaction and must not be used as an idle claim.
+
+A separate 30.18-second repeat recorded 81.82 MiB mean private bytes (81.83 MiB
+peak), 79.10 MiB working set, and no measurable CPU-time increase during sampling.
+Exit diagnostics recorded 124 frames and 246 input events, including startup;
+input was not prevented. This shorter repeat is still an activity-qualified
+observation, not proof of a full no-input idle budget. Both reports identify
+the storage checkpoint plus the dirty desktop integration tree. GPU memory,
+large saved collections, active dragging, and concurrent playback were not
+resource-qualified. Raw results remain ignored under `benchmarks/results/`.
+
 ## Reproduce
 
 ```powershell

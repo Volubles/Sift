@@ -19,7 +19,9 @@ or launch directory. The desktop/headless feature configurations share the same
 core. Playback and waveform analysis are implemented as described in
 [preview architecture](PREVIEW.md). The Windows native copy-only adapter and
 desktop drag gestures are implemented as described in
-[native transfer architecture](DRAG-AND-DROP.md). Projects remain unimplemented.
+[native transfer architecture](DRAG-AND-DROP.md). Saved collection references,
+transactional edits, source availability, and the desktop collection panel are
+implemented as described in [Collections](COLLECTIONS.md).
 
 File validation/encoding runs on a bounded preparation worker. The modal OLE
 gesture is posted to a private HWND on the window's input thread after the
@@ -74,8 +76,8 @@ independent of the UI.
 | `app` | Startup, configuration, wiring, controlled shutdown | Search rules, decoding, SQL in event handlers. |
 | `library` | Roots, file identity, scanning, library state | UI or audio devices. |
 | `search` | Queries, filters, stable sorting, result pages | Direct UI widget access. |
-| `projects` | Projects, references, ordering, save rules | Modification of library originals. |
-| `audio` | Decode, buffering, seek, resampling, playback | Project persistence and search queries. |
+| `collections` | Collections, references, ordering, save rules | Modification of library originals. |
+| `audio` | Decode, buffering, seek, resampling, playback | Collection persistence and search queries. |
 | `analysis` | Waveforms and versioned descriptors | UI thread or unbounded full-file loading. |
 | `storage` | SQL, migrations, transaction boundaries | Product decisions and native dragging. |
 | `export` | Destination planning, conflicts, copying, outcomes | Source deletion or movement. |
@@ -91,7 +93,7 @@ logic must not depend on egui, CPAL, or Windows objects.
 
 - `LibraryRoot`: stable ID, root locator, availability.
 - `Sample`: stable ID, root and relative OS path, file revision, metadata.
-- `Project` / `ProjectItem`: separate IDs, sample references, ordering,
+- `Collection` / `Entry`: separate IDs, sample references, ordering,
   optional virtual folder, export name, and note.
 - Manual tags/favorites: durable user information with an explicit owner.
 - Waveforms/analysis: rebuildable derived data with versioned keys.
@@ -143,7 +145,7 @@ must cause an error, not reset the database.
 
 Distinguish unknown metadata from zero, and errors from pending analysis.
 Index actual filter/sort patterns and inspect query plans for large result sets.
-Version serialized projects and settings.
+Version serialized collections and settings.
 
 Define token, prefix, and substring matching explicitly before choosing FTS5
 tokenizers. Verify filename punctuation, Unicode, literal queries, and short
@@ -158,7 +160,7 @@ An unavailable root is not evidence that the user deleted its contents.
 
 Waveform caches can use multiresolution peaks for large files. Keys include file
 revision, algorithm version, and relevant parameters. Every cache needs a size
-limit, eviction, and invalidation. No cache may hold the only copy of a project
+limit, eviction, and invalidation. No cache may hold the only copy of a collection
 or manually entered tags.
 
 If requested, similarity starts with normalized, versioned acoustic descriptors

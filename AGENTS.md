@@ -1,7 +1,7 @@
 # Sift: agent working agreement
 
 Sift is a local, resource-efficient sample browser written in Rust. Its core
-workflow is finding sounds, previewing them, saving references in projects, and
+workflow is finding sounds, previewing them, saving references in collections, and
 copying selections to other folders. Preserve source files and user data.
 Low CPU/RAM usage, responsiveness, and readable code are quality requirements.
 
@@ -46,16 +46,16 @@ Use the document that matches the task:
 
 ## Product invariants
 
-- Project items are references. Tagging, project changes, and export do not alter
+- Collection items are references. Tagging, collection changes, and export do not alter
   source names, contents, or locations. External drag-and-drop offers copying.
-- Separate durable projects/tags/favorites from rebuildable indexes and caches.
+- Separate durable collections/tags/favorites from rebuildable indexes and caches.
   Reindexing and cache cleanup must preserve the user's work.
 - Missing sources, unknown metadata, analysis errors, and pending jobs are
   distinct states. Do not silently resolve ambiguous file matches.
 - The core workflow works offline without AI categorization. Similarity search
-  must not be required to open, search, or use ordinary projects.
+  must not be required to open, search, or use ordinary collections.
 - Silent replacement, reporting partial export as complete success, and losing
-  unsaved project edits are bugs even when the normal path works.
+  unsaved collection edits are bugs even when the normal path works.
 
 ## Code quality and ownership
 
@@ -104,7 +104,7 @@ Use the document that matches the task:
 ## Storage, files, and errors
 
 - Validate external boundaries: files, metadata, search input, configuration,
-  serialized projects, and native responses. Parameterize SQL.
+  serialized collections, and native responses. Parameterize SQL.
 - Use versioned schemas and transactions for durable changes. Preserve data on
   migration failure; unsupported versions must not reset the database.
 - File identity, location, and content hash are different concepts. Preserve OS
@@ -122,7 +122,7 @@ Use the document that matches the task:
 
 ## UI and dependencies
 
-- Make lists, multi-selection, keyboard focus, playback, and project state clear.
+- Make lists, multi-selection, keyboard focus, playback, and collection state clear.
   Show progress, missing sources, and save failures without freezing the UI.
 - Preserve selection and relevant view settings through updates. Internal
   dragging is not proof of support for external applications.
@@ -159,7 +159,7 @@ text changes, or repeat expensive checks without a new reason.
   genuine fixtures.
 - Audio/files: format variants, long files, seeking, cancellation, missing or
   modified sources, and malformed data. Use small fixtures with known rights.
-- Projects/export: restart, rollback, conflicts, partial failures, and unchanged
+- Collections/export: restart, rollback, conflicts, partial failures, and unchanged
   originals. Verify reindexing preserves manually entered user data.
 - Concurrency: stale responses, rapid selection, shutdown during work, and queue
   bounds. Prefer controlled coordination over arbitrary timing sleeps.

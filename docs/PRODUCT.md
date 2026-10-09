@@ -15,9 +15,9 @@ of a feature's quality.
 
 - Rust is the primary language. The application works locally without accounts
   or network access.
-- Projects collect references to sounds; a sound can belong to several projects.
+- Collections collect references to sounds; a sound can belong to several collections.
 - Dragging from the application to an external folder copies the original file.
-- Tagging, project operations, and export do not modify library originals.
+- Tagging, collection operations, and export do not modify library originals.
 - AI categorization is outside the planned core product.
 - Similarity search is a possible later step; the core workflow works without it.
 - Small, coherent checkpoint commits are the standard workflow.
@@ -62,27 +62,27 @@ Background analysis must not block search. A delayed response to an old query
 must not replace a newer result. Distinguish no matches, pending search, and
 search failure in the UI.
 
-## Projects and saving
+## Collections and saving
 
-Projects can be created, renamed, opened, and saved. They contain selected
+Collections can be created, renamed, opened, and saved. They contain selected
 sounds, ordering, virtual folders, and optional export names and notes.
-Deleting a project or item removes its references.
+Deleting a collection or item removes its references.
 
 Accepted edits are saved transactionally and survive restart. Show pending or
 failed saves and preserve unsaved changes for retry. Cache cleanup and full
-reindexing must not remove projects, favorites, or manual tags.
+reindexing must not remove collections, favorites, or manual tags.
 
 Show correct status when a source moves, changes, or disappears. Users can
 reconnect a root or select a replacement source. Ambiguous matches must not
-silently attach a project to the wrong sound. Making a project self-contained
-by copying sounds into its folder is a later export option; ordinary projects
+silently attach a collection to the wrong sound. Making a collection self-contained
+by copying sounds into its folder is a later export option; ordinary collections
 must not duplicate the library.
 
 ## Copying, export, and drag-and-drop
 
-Users can drag one or more project sounds into Explorer and receive copies with
+Users can drag one or more collection sounds into Explorer and receive copies with
 unchanged audio content. Exporting to a chosen folder is a complementary
-workflow. Library originals and project references remain intact.
+workflow. Library originals and collection references remain intact.
 
 Plan destination paths before writing. Offer skip, unique naming, or explicit
 replacement for conflicts; default to preserving existing files. Handle reserved
@@ -100,7 +100,7 @@ application support for each actual target.
 - Exact duplicates using content hashes; acoustically close duplicates are a
   separate result with different confidence. No automatic deletion.
 - Richer tagging, saved queries, export naming, and analysis filters.
-- Portable project descriptions and package exports with an explicit schema.
+- Portable collection descriptions and package exports with an explicit schema.
 
 Semantic search, cloud sync, recording, plugin formats, audio editing, a
 timeline/DAW, and full Sononym parity are outside the first delivery. Expanding
@@ -113,7 +113,7 @@ into these areas requires a concrete product decision.
 | 0 | Repository, instructions, specification | Documents distinguish decisions, proposals, and actual status. |
 | 1 | Technical prototype | Large virtual list, playback, waveform, and outgoing copy drag work on Windows; CPU/RAM are measured. |
 | 2 | Libraries and search | Register, scan, search, and restart; handle changed and corrupt files. |
-| 3 | Projects | Save references, ordering, and folders; preserve originals; show missing sources. |
+| 3 | Collections | Save references, ordering, and folders; preserve originals; show missing sources. |
 | 4 | Copying and robustness | Verify multi-selection, collisions, cancellation, and failures with unchanged sources. |
 | 5 | Performance and distribution | Verify representative measurements, recovery, and a Windows package. |
 | 6 | Optional similarity search | Demonstrate useful rankings and acceptable resource cost. |

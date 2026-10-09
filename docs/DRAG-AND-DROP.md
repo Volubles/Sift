@@ -30,6 +30,11 @@ by default. It supports multiple references internally; the current desktop
 selects and drags one sound. Other platforms do not claim outgoing native drag
 support yet.
 
+Collections add an internal egui drag phase: a held drag within Sift can add a
+reference to a collection name. Native copying starts only when the primary
+drag leaves the client area. The copy-only/self-drop safeguards then apply;
+returning inside after native handoff ends quietly. See [Collections](COLLECTIONS.md).
+
 ## Threads, bounds, and native safety
 
 - One dedicated preparation worker; one request and one preparation result slot.

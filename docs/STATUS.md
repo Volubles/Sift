@@ -1,13 +1,13 @@
 # Current status and next steps
 
-Last updated: 2026-10-09. This document describes actual deliveries; product
+Last updated: 2026-10-10. This document describes actual deliveries; product
 and architecture documents describe the intended application.
 
 ## Completed
 
 - Local Git repository on `main`, repository hygiene, Conventional Commit workflow.
 - AGENTS.md with durable quality requirements and instructions for resuming work.
-- Requirements for libraries, search, preview, projects, and copying.
+- Requirements for libraries, search, preview, collections, and copying.
 - Technical direction, responsibilities, threads, storage, native boundaries.
 - Proposed performance budgets and a reproducible measurement plan.
 - Repository documentation translated to English; English is required for
@@ -26,7 +26,7 @@ and architecture documents describe the intended application.
 
 Playback and waveforms are now implemented with a bounded audio worker and
 derived waveform cache. Single-source copy-only native dragging is integrated
-on Windows. Projects, tags, multi-selection, and application-managed export are
+on Windows. Saved collections are implemented. Tags, multi-selection, and application-managed export are
 not implemented yet. No CI
 configuration exists yet. Active implementation branch: `prot/library-prototype`;
 check Git before assuming a branch in a future session.
@@ -34,7 +34,7 @@ No remote, publishing, or distribution license has been selected.
 
 ## Decisions and open choices
 
-- Agreed: Rust, efficient local workflow, projects as references, copy-only
+- Agreed: Rust, efficient local workflow, collections as references, copy-only
   outgoing drag-and-drop, English artifacts, and small checkpoint commits.
 - Reviewed prototype direction: Windows first, egui/eframe, bundled SQLite/FTS5
   through rusqlite, Symphonia, CPAL, Rubato when needed, rtrb, and a limited
@@ -124,10 +124,24 @@ Collections is now the agreed product term. Its durable storage foundation is
 implemented in a separate database with independent typed IDs, native paths,
 bounded pages/queues, transactional edits, and explicit source availability.
 Restart/index-rebuild preservation and unread-save shutdown tests pass. See
-[collections architecture](COLLECTIONS.md). Desktop integration is in progress.
+[collections architecture](COLLECTIONS.md). The desktop now creates/renames/deletes
+collections, adds/removes source references, retains failed drafts for retry,
+and loads bounded collection/content pages. Its compact table, upper waveform,
+auto-play, optional details, and internal reference dragging are implemented.
+47 desktop tests and 28 headless tests pass; explicit real-device concurrency
+testing also passes. Pre-seeded native captures were visually checked, and
+keyboard interaction created a collection in the actual Windows app. The
+automation helper could not obtain pointer geometry, so physical mouse/drop
+coverage remains explicit. Collection folders and last-active-view persistence
+are not part of this first checkpoint.
 
-Verify the manual Explorer flow, then implement durable collection references,
-ordering/folders, and multi-selection. Keep incremental indexing,
+The Collections release resource repeat measured about 82 MiB private memory
+with no measurable CPU-time increase over 30 seconds. Activity diagnostics and
+limits are recorded in [baseline](BASELINE.md); the longer run had substantial
+input and cannot qualify idle CPU.
+
+Verify collection mouse gestures and the revised Explorer handoff, then add
+virtual collection folders, ordering, and multi-selection. Keep incremental indexing,
 source reconciliation, broader device tests, and performance qualification
 explicit. Sift is still a prototype, not a finished sampler.
 
