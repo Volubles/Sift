@@ -2,7 +2,10 @@
 
 ## Status and proposed budgets
 
-No application measurements exist yet. The following are proposed prototype
+No release performance baseline exists yet. A native debug smoke test has
+rendered a 100,000-record synthetic catalog while loading 128 metadata records
+into the view; this is bounded-loading evidence, not CPU/RAM or latency proof.
+See [checkpoint verification](CHECKPOINT.md). The following are proposed prototype
 budgets, not user-confirmed SLAs or achieved results. They make efficiency
 measurable. Revise them through a reasoned product decision after measurement;
 do not silently raise them to make a regression pass.

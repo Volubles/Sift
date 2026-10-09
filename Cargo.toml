@@ -6,11 +6,19 @@ rust-version = "1.98"
 publish = false
 description = "A resource-efficient local sample browser"
 
+[features]
+default = ["desktop"]
+desktop = ["dep:eframe", "dep:rfd"]
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
 symphonia = { version = "=0.6.1", default-features = false, features = ["wav", "aiff", "pcm", "flac", "mp3"] }
 thiserror = "2"
+eframe = { version = "=0.36.2", optional = true, default-features = false, features = ["default_fonts", "wgpu", "accesskit", "x11", "wayland"] }
+
+[target.'cfg(windows)'.dependencies]
+rfd = { version = "=0.17.2", optional = true, default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

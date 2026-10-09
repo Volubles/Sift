@@ -180,6 +180,9 @@ fn pages_are_bounded_stably_sorted_and_visible_to_a_separate_reader() {
     assert_eq!(first.rows[0].name, "tone_000.wav");
     assert_eq!(second.rows[0].name, "tone_128.wav");
     assert_ne!(first.rows.last().unwrap().id, second.rows[0].id);
+    let beyond_end = reader.search(&SearchQuery::All, 1024).unwrap();
+    assert_eq!(beyond_end.offset, 1024);
+    assert!(beyond_end.rows.is_empty());
 }
 
 #[test]

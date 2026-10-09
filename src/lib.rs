@@ -1,6 +1,11 @@
 pub mod catalog;
+pub mod config;
 pub mod library;
 pub mod search;
+pub mod worker;
+
+#[cfg(feature = "desktop")]
+pub mod desktop;
 
 mod path_codec;
 
@@ -20,6 +25,10 @@ pub enum Error {
     InvalidQuery(String),
     #[error("A value exceeds the catalog's supported range")]
     OutOfRange,
+    #[error("Desktop initialization failed: {0}")]
+    Desktop(String),
+    #[error("Configuration error: {0}")]
+    Configuration(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

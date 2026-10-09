@@ -4,6 +4,7 @@ use std::path::Path;
 
 use symphonia::core::formats::{TrackType, probe::Hint};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
+use symphonia::core::{common::Limit, meta::MetadataOptions};
 
 use super::{AudioMetadata, Cancellation};
 
@@ -29,7 +30,9 @@ pub fn read(path: &Path, cancellation: Cancellation) -> ProbeResult<AudioMetadat
         &hint,
         stream,
         Default::default(),
-        Default::default(),
+        MetadataOptions::default()
+            .limit_tag_bytes(Limit::Maximum(4096))
+            .limit_visual_bytes(Limit::Maximum(0)),
     )?;
     let track = format
         .default_track(TrackType::Audio)

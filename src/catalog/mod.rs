@@ -145,7 +145,6 @@ impl Catalog {
             |row| row.get(0),
         )?;
         let total = usize::try_from(total).map_err(|_| Error::OutOfRange)?;
-        let offset = offset.min(total);
         let limit_parameter = values.len() + 1;
         let offset_parameter = values.len() + 2;
         values.push(Value::Integer(PAGE_SIZE as i64));

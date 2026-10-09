@@ -19,9 +19,14 @@ and architecture documents describe the intended application.
   SQLite/FTS5 catalog, bounded search, lossless native paths, and a runnable CLI.
 - Eleven automated checks cover real WAV metadata, unchanged sources, cancellation,
   rollback, schema protection, search semantics, paging, and native path encoding.
+- Native egui/WGPU desktop browser with folder selection, search, metadata
+  inspection, cancellation, independent workers, and a bounded page cache.
+- Additional tests cover concurrent visible pages, worker startup failure,
+  full-queue shutdown, and retaining pages when scrolling backward.
 
-The desktop UI, playback, projects, and export are not implemented yet. No CI
-configuration exists yet.
+Playback, waveforms, projects, tags, and export are not implemented yet. No CI
+configuration exists yet. Active implementation branch: `codex/library-prototype`;
+check Git before assuming a branch in a future session.
 No remote, publishing, or distribution license has been selected.
 
 ## Decisions and open choices
@@ -45,18 +50,21 @@ checkpoint. Git history is the source of current hashes and branch.
 The stack review checked official docs, release-tag source, and current crate
 metadata. It did not install tools or compile candidate frameworks.
 
-The core compiles; eleven tests and warning-free Clippy pass. Formatting is
-checked. Playback, native dragging, and application performance have not been
-measured; metadata support must not be presented as playback proof.
+The desktop/core compile; fifteen default-feature tests, fourteen headless tests,
+warning-free Clippy, and formatting checks pass. An actual Windows window has
+rendered real generated fixtures and a 100,000-row synthetic catalog with only
+128 records loaded into the view. Captures were visually checked.
+Playback, native outgoing dragging, and release performance budgets are not
+verified. See [checkpoint verification](CHECKPOINT.md) for evidence and limits.
 The CLI also indexed generated WAV, FLAC, MP3, and AIFF fixtures without errors;
 all four SHA-256 source hashes were unchanged afterward.
 
 ## Next proposed task
 
-Add the small egui desktop shell with independent index/search workers, a virtual
-list, folder selection, cancellation, and metadata inspection. Then prove
-waveform/preview and native dragging in separate coherent checkpoints. Use
-disposable fixtures and measure idle resources, latency, and memory.
+Implement waveform analysis and controlled preview playback next. Prove seeking,
+cancellation, device recovery, and native outgoing dragging in coherent
+checkpoints. Use disposable fixtures and measure idle resources, latency, and
+memory. Do not present the metadata browser as a finished sampler.
 
 Choose major technical details from that evidence before introducing a full
 analysis pipeline, AI, or a large application framework.

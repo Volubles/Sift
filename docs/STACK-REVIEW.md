@@ -1,8 +1,9 @@
 # Stack review
 
 Reviewed: 2026-10-09. Evidence: official documentation, release-tag source,
-upstream repositories, and current crate registry metadata. No candidate has
-been compiled, benchmarked, or exercised with Windows audio/dragging in Sift.
+upstream repositories, and current crate registry metadata. At review time,
+no candidate had been compiled or exercised in Sift. Subsequent implementation
+evidence is recorded in [current status](STATUS.md) and [checkpoint verification](CHECKPOINT.md).
 Recommendations below are engineering judgments, not a measured ranking.
 
 ## Recommendation
