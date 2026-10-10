@@ -1,4 +1,4 @@
-# Rust application: keep Cargo.lock tracked when the application is created.
+# Rust build and distribution output.
 /target/
 /dist/
 

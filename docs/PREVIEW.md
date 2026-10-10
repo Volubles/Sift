@@ -1,59 +1,65 @@
-# Preview and waveform checkpoint
+# Audio preview and waveforms
 
-Implemented on Windows, 2026-10-09. The desktop now includes Play/Pause, Stop,
-volume, a submitted-frame playhead, Space playback control, and click-to-seek
-on a waveform. Selection starts the next sound when preview is already active;
-initial selection only prepares a waveform and does not open an audio device.
+The selected sound has Play/Pause, Stop, volume, auto-play, a waveform, and source
+details. Auto-play starts a newly selected sound. With auto-play disabled,
+selection stops the previous preview and prepares the new waveform without
+opening an output device. Clicking the waveform plays from that position.
 
-## Architecture and limits
+Space toggles playback when text fields and the folder tree do not own keyboard
+focus. Missing sources and metadata errors disable preview and remain visible.
+Changed sources retain their saved references while selected metadata is checked.
 
-- A dedicated worker owns file decoding, rate conversion, and the CPAL stream.
-  The device is opened lazily and released when paused, stopped, or finished.
-- Stream recreation on seek/source changes prevents previously queued OS audio
-  from being reused. Requests coalesce; cancellation invalidates old work.
-- A 16,384-frame SPSC ring holds prepared stereo frames and generations. The
-  data callback uses only the ring, stack values, and atomics: no I/O, logging,
-  locking, allocation, or UI notification.
-- Playback starts after 4,096 frames are prepared, or after a shorter clip's
-  tail is flushed. Decoder work is prioritized when the buffer needs data.
-- Mono is duplicated, stereo preserved, and 3-8 channels averaged to mono for
-  this prototype. Output is float PCM at the device's default rate; other
-  output formats and sources over 384 kHz are unsupported.
-- Rubato converts rates in bounded chunks, bypassing equal rates and trimming
-  startup delay/tail. UI position tracks submitted frames, not measured speaker
-  latency. Waveform duration derives from decoded frames.
-- Waveforms are reduced to at most 2,048 min/max bins with cooperative cancellation.
-  A separate derived SQLite cache uses native path, size, modification time, and
-  algorithm version. It bounds entries, peak payload, and database pages.
-  Timestamp/size are change indicators, not cryptographic content identity.
-- Source files are read only; cache failure falls back to analysis.
+## Selection ownership
 
-## Verification
+`desktop::preview::Preview` owns the selected reference, availability, source
+revision, waveform, output state, volume, and auto-play setting. It queues source
+inspection on the catalog read worker and owns its waveform/player interfaces.
+Source, waveform, and playback generations reject late replies after selection
+or file changes. An observed write invalidates the preview even when size and
+timestamps match the previous metadata.
 
-The checks below were run with the private local verification suite and fixtures.
-Those sources are not included in this source distribution.
+## Playback
 
-- 26 default-feature tests passed, 23 headless tests passed, and Clippy with
-  warnings denied and formatting checks passed.
-- An explicitly run hardware test switches sources and starts a two-minute PCM
-  stream while indexing proceeds in the same process. It passed with zero
-  recorded underruns; it is ignored in normal hardware-independent test runs.
-- Actual Windows WASAPI output callbacks consumed nonzero PCM from generated
-  WAV, FLAC, MP3, and AIFF sources. The 44.1 kHz mono fixtures exercised conversion
-  to the default output, pause stability, seeking, and reopening the output.
-  All four final exercises reported zero underruns and a 1.200-second end time.
-- First nonzero callback observations were approximately 34-48 ms in those
-  debug runs. These are single-run internal observations, not audible latency
-  or p95 measurements. Physical listening and device unplug/replug remain manual.
-- SHA-256 checks showed unchanged generated sources after the device exercises.
-- An actual release native window rendered the waveform and controls; captures
-  were visually inspected. Mouse/keyboard interaction still needs hands-on QA.
-- Invalid controls, missing sources, stream generations, cancellation, source
-  preservation, seek, resampling duration/tail, cache invalidation, and corrupt
-  cached peaks are covered by automated checks.
+A dedicated worker owns decoding, rate conversion, and the CPAL stream. The
+device opens lazily and is released when paused, stopped, or finished. Seeking
+or changing source recreates the stream to discard previously queued OS audio.
+Requests coalesce and cancellation invalidates old work.
 
-Raw audio, catalogs, screenshots, and logs are ignored scratch data. No private
-sample collection was scanned and no microphone or system loopback was recorded.
+A 16,384-frame SPSC ring holds stereo frames and generations. Playback starts
+after 4,096 prepared frames, or after the tail of a shorter clip is flushed.
+The callback uses preallocated frames, stack values, and atomics, with no file
+I/O, logging, locking, allocation, or UI notification.
+
+Mono is duplicated, stereo preserved, and 3-8 channels averaged to mono. Output
+is float PCM at the device's default rate; other output formats and sources over
+384 kHz are unsupported. Rubato converts rates in bounded chunks, bypassing
+equal rates and trimming startup delay and tail.
+
+The playhead tracks submitted frames, not measured speaker latency. Visible
+playback requests a repaint about every 33 ms; idle preview has no repaint timer.
+
+## Waveforms
+
+Analysis reduces decoded audio to at most 2,048 min/max bins with cooperative
+cancellation. A separate derived SQLite cache uses native path, size,
+modification time, and algorithm version. Entries, peak payloads, and database
+pages have bounds. Cache failure falls back to analysis. Audio sources are read
+only; no preview operation rewrites or transcodes them.
+
+## Qualification
+
+Local verification covers decoding, seeking, cancellation, rate-conversion
+duration/tail, missing sources, corrupt cache entries, source preservation,
+generation changes, and observed writes. Actual WASAPI callbacks consumed
+nonzero PCM from generated WAV, FLAC, MP3, and AIFF fixtures; final exercises
+reported zero underruns and a 1.200-second end time. Their first nonzero callbacks
+were approximately 34-48 ms in debug mode, measured once per exercise.
+
+Those callback observations do not measure audible latency or percentiles.
+Physical listening, device unplug/replug, broader codec/output variants, and
+interaction under sustained load need further qualification. Test sources and
+fixtures are maintained privately. Resource observations are in
+[the renderer/audio baseline](BASELINE.md).
 
 ## Output diagnostics
 
@@ -61,10 +67,5 @@ sample collection was scanned and no microphone or system loopback was recorded.
 cargo run --locked -- audio-check PATH_TO_GENERATED_AUDIO --exercise
 ```
 
-The local hardware suite uses very low-volume disposable audio. Its invocation
-is maintained with the private fixtures. The included audio-check command is
-intended for short files and times out after ten seconds. Neither check proves
-compatibility with every device/codec variant.
-
-Projects, tags, export, native outgoing dragging, incremental indexing, and
-similarity remain separate future checkpoints.
+This included command exercises short files and times out after ten seconds.
+It reports callback counters; it does not certify device or codec compatibility.

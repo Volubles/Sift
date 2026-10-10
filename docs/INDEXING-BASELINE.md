@@ -64,16 +64,16 @@ the shorter sampled window limit the claim.
 
 ## Reproduction conditions
 
-Archive a verified preceding release executable under the comparison name above,
-or omit it to measure the new implementation alone. The harness, fixtures, and
-invocation instructions are maintained with the private local suite and are not
+The comparison uses the preceding release executable described above; runs
+without it measure the new implementation alone. The harness, fixtures, and
+run settings are maintained with the private local suite and are not
 included in this source distribution. The method above specifies the generated
 file population, warm/cold inventory conditions, settling interval, repetitions,
 and completion criteria used for these results.
 
 Resource sampling covers the measured process's private bytes, working set, and
 CPU time during the marked idle interval. Fixtures use an owned temporary
-directory inside the approved workspace and are removed when measurement ends.
+directory inside the workspace and are removed when measurement ends.
 
 Raw comparison output and process samples remain ignored under
 `.local/indexing-perf/`. NAS/external drives, notification-loss storms, long

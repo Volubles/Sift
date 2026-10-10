@@ -1,4 +1,4 @@
-# First release resource baseline
+# Renderer and audio resource measurements
 
 Measured on Windows on 2026-10-09, with 100,000 synthetic metadata records,
 the same 1120 x 720 browser, a local catalog, no deliberate interaction, and no audio.
@@ -45,8 +45,8 @@ idle budget or audible latency.
 
 Two other preview observations reported 0.676%/0.813% machine CPU. The latter
 recorded 9,754 input events and 2,748 UI frames, so it was active interaction,
-not idle. The initial run lacked activity instrumentation. Do not use either
-as proof of idle CPU or silently discard them from the raw records. Input was
+not idle. The initial run lacked activity instrumentation. Neither observation
+qualifies idle CPU; both remain part of the recorded evidence. Input was
 not prevented during the original renderer baselines either; comparisons remain
 local observations requiring controlled repetition on representative hardware.
 
@@ -63,8 +63,8 @@ Input was not prevented, and those counts include startup/settle. This run is
 therefore an activity-qualified resource observation, not a certified no-input
 idle benchmark or a paired before/after comparison. GPU memory, active dragging,
 Shell copy memory, and simultaneous playback resource costs were not measured.
-The raw report records the adapter checkpoint plus the dirty desktop integration
-working tree and is ignored under `benchmarks/results/`.
+The raw report records the adapter build and uncommitted desktop integration
+changes and is ignored under `benchmarks/results/`.
 
 ## Collections observations
 
@@ -72,14 +72,14 @@ The Collections release was observed with the same 100,000-row synthetic catalog
 and an empty durable collection store. A 60.37-second run recorded 86.15 MiB mean
 private bytes (87.11 MiB peak), 80.53 MiB working set, and 1.040% machine CPU.
 Its diagnostics recorded 3,570 frames and 13,726 input events, so this was active
-interaction and must not be used as an idle claim.
+interaction rather than controlled idle operation.
 
 A separate 30.18-second repeat recorded 81.82 MiB mean private bytes (81.83 MiB
 peak), 79.10 MiB working set, and no measurable CPU-time increase during sampling.
 Exit diagnostics recorded 124 frames and 246 input events, including startup;
 input was not prevented. This shorter repeat is still an activity-qualified
 observation, not proof of a full no-input idle budget. Both reports identify
-the storage checkpoint plus the dirty desktop integration tree. GPU memory,
+the storage build with uncommitted desktop integration changes. GPU memory,
 large saved collections, active dragging, and concurrent playback were not
 resource-qualified. Raw results remain ignored under `benchmarks/results/`.
 
@@ -94,5 +94,5 @@ invocation is recorded with the local verification suite and is not included
 in this source distribution. It starts/closes only its own process, refuses
 existing reports, and preserves catalog/source files. The method above records
 sampling intervals, startup/settling conditions, CPU normalization, and activity
-limitations. Include GPU memory, interactive latency, repeated starts, and a
-representative real library in future reports.
+limitations. GPU memory, interactive latency, repeated starts, and representative
+real libraries remain qualification gaps.

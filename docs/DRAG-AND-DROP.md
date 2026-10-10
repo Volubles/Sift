@@ -1,4 +1,4 @@
-# Native file drag checkpoint
+# Native file dragging
 
 ## Contract and ownership
 
@@ -8,9 +8,8 @@ the same preferred effect. Sift does not move, delete, rename, transcode, or sta
 copies of source audio. The destination application owns copying, conflict
 prompts, cancellation after acceptance, and destination errors.
 
-An accepted drop means **the target accepted the copy offer**, not that every
-destination file was published successfully. Do not report it as completed
-export. Application-managed export with explicit conflict planning and per-file
+An accepted drop means **the target accepted the copy offer**. Destination
+publication and any copying failures belong to that target. Application-managed export with explicit conflict planning and per-file
 outcomes remains a separate feature.
 
 The desktop starts dragging from a library row or the selected sound's
@@ -22,8 +21,7 @@ without a persistent banner or a notification timer. Actual source/native
 failures remain visible with **Dismiss**, or clear when a new drag starts.
 After the result, egui clears
 the drag ID and pointer state because OLE consumes the final release in its
-modal loop. A deterministic interaction test covers click/drag separation
-and reusing the row after that reset.
+modal loop. The reset lets the row accept another click or drag after native completion.
 
 The adapter is available through the `native-drag` feature, which desktop enables
 by default. It supports multiple references internally; the current desktop
@@ -69,12 +67,9 @@ returning inside after native handoff ends quietly. See [Collections](COLLECTION
   frees unpublished allocations; the receiving target owns successful media
   and releases them through `ReleaseStgMedium`.
 
-`windows` and `windows-core` are pinned to 0.62.2 (MIT OR Apache-2.0), already
-present in the previous dependency graph. Enabled Win32 APIs cover COM/OLE,
+`windows` and `windows-core` are pinned to 0.62.2 (MIT OR Apache-2.0). Enabled Win32 APIs cover COM/OLE,
 global memory, file references, mouse capture, and the owned UI message window.
-There is no new framework or runtime. `unsafe_code` is denied throughout Sift
-and allowed only in `src/platform/windows_drag.rs` and its native host submodule,
-including their native tests;
+The adapter uses scoped unsafe code in its OLE/host modules;
 `unsafe_op_in_unsafe_fn` remains denied. Safety comments describe pointer and
 ownership contracts at the boundary. COM method inputs are validated before use.
 
@@ -94,72 +89,27 @@ meaning. The catalog locator is unchanged. A greater-than-260-character source
 with ordinary components was successfully copied by the tested Shell target.
 UNC encoding is tested; an actual network share is not yet tested.
 
-## Verification and remaining checks
+## Qualification
 
-Automated tests cover selection bounds, absolute paths, missing sources,
-directories, shutdown with an unread outcome, independent native media,
-format/aspect/index/medium validation, UTF-16 preservation, payload limits,
-safe path conversion, Escape, modifiers, copy-only negotiation, and an actual
-OLE cancellation with a worker-queue wake.
+Local verification covers bounds, path validation, native media ownership,
+clipboard formats, copy-only effects, cancellation, deferred owner-thread
+dispatch, self-drops, retry, and unread-result shutdown. An explicit Windows
+Shell target check copied three generated WAV files into a disposable directory
+with byte-identical destinations and unchanged originals. Fixtures included
+Unicode, spaces, extended locators, and a source longer than 260 characters.
 
-The explicit Windows Shell integration test invokes the actual folder
-`IDropTarget`, obtained from `IShellItem::BindToHandler(BHID_SFUIObject)`. It copies
-three generated PCM WAV files to a disposable folder, checks complete byte-for-
-byte destination contents, and verifies unchanged originals. Fixtures include
-spaces, Unicode, canonical extended locators, and a source path over 260
-characters. No private library is scanned and no recording is made.
+The harness and fixtures are maintained privately. Native target interoperability
+and window captures do not establish complete interactive Explorer behavior.
+Physical repeated gestures, Escape/modifiers, conflicts, same-folder drops,
+missing sources, and playback during dragging still need broader qualification.
+DAWs, network shares, denied permissions, and full disks have separate limits.
 
-The native verification harness and generated fixtures are maintained privately
-and are not included in this source distribution. Their invocation is recorded
-with the local suite.
+OLE starts after the current egui/winit callback returns. This avoids entering a
+nested message loop while application/event-handler state is borrowed; Windows
+can deliver redraw messages during that loop. The OS supplies drag cursor
+feedback. A custom floating file thumbnail is not implemented.
 
-This proves native file-data interoperability and actual Shell copying. It does
-not prove the full Sift mouse gesture into an Explorer window. Manual Explorer
-checks remain: release and repeated gestures, Escape, Shift/Ctrl/Alt, existing
-destination names, same-folder drops, missing sources, and playback while
-dragging. Other DAWs/applications, network shares, denied permissions, full disks,
-and batch failure outcomes require their own runtime evidence.
-
-The desktop passes 38 default-feature tests, formatting, and warning-
-free Clippy. The earlier CLI/core checkpoint passed 23 tests with default
-features disabled. Native tests include an actual owned HWND and an invalid
-window handle: both release decisions cancel before any target drop. The prior
-adapter-only configuration passed ten checks.
-The explicit Shell target check passed separately. The local suite intentionally
-skips Shell/device checks unless explicitly requested. A release build and native
-desktop capture with the new drag control pass;
-the capture was visually inspected. These checks do not establish audible output
-or a successful interactive Explorer gesture.
-
-Before the input-thread repair, the release observation used a 100,000-row synthetic catalog
-for 60 seconds and recorded about 82 MiB private memory with no measurable
-process CPU-time increase. Exit diagnostics recorded input activity, so this is
-not a controlled idle claim. See [resource baseline](BASELINE.md) for the method,
-raw-record context, and unmeasured active-drag/playback scenarios.
-
-## Input-thread repair
-
-The original interactive attempt on Windows stayed in "Dragging a copy" without
-native feedback, and Escape did not finish it while other Sift controls remained
-usable. Native file-data/Shell tests had not exercised that gesture. The original
-implementation ran OLE on an unrelated background input queue.
-
-The repair keeps filesystem preparation on its worker and posts native startup
-to a private HWND on the creator's UI/input thread. It also avoids calling a
-modal message loop while egui or winit's event handler is borrowed: the pinned
-winit Windows runner can immediately dispatch `RedrawRequested` during nested
-messages. A native HWND test verifies deferred delivery on the owning thread,
-cancellation after startup is queued, final delivery, cleared busy state, and
-unchanged sources. Additional regressions cover off-thread preparation, caller-
-thread dispatch, cancellation before a late start, retry, and unread shutdown.
-
-The Windows automation helper could not start (`failed to write kernel assets`,
-OS error 3), so the repaired physical Sift-to-Explorer gesture is not yet
-automatically verified. The default release binary was rebuilt and the native
-window smoke check passes. Manual copy, repeated drag, Escape, and modifiers
-remain required; the source UI should now show native copy cursor feedback
-when a target accepts the offer. A custom floating file thumbnail is not
-implemented.
+Resource observations are recorded in [the desktop baseline](BASELINE.md).
 
 ## Primary references
 

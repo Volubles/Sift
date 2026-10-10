@@ -1,6 +1,6 @@
 # Incremental indexing and live changes
 
-## Incremental foundation
+## Inventories
 
 Catalog schema 3 preserves previous sample IDs and makes future IDs non-reused.
 Metadata records include size, modified/creation timestamps, and a probe version.
@@ -23,7 +23,7 @@ Renames appear at their new location; saved collection references remain intact
 and may become missing. Automatic durable-source relinking requires a separate
 identity decision and is not guessed from filenames.
 
-## Live Windows changes
+## Live Windows updates
 
 The index owner registers coalesced source roots with `windows-file-watcher`
 0.2.2 (MIT, Rust 1.98). It uses native directory notifications, not recurring
@@ -60,42 +60,25 @@ refresh metadata/waveforms and stop a stale preview; missing sources retain thei
 references and become unavailable. Observed writes can bypass waveform cache
 signatures, including size/timestamp-preserving content changes.
 
-## Verification and limits
+## Qualification and limits
 
-Generated WAV tests cover unchanged/restarted inventories with no main-database
-write, timestamp-preserving edits, additions, nested moves/deletions, non-reused
-IDs, saved-reference preservation, cancelled/incomplete scans, offline roots,
-and rejecting paths outside approved roots. Earlier schema migration, rollback,
-FTS, collection, and source-preservation tests remain applicable.
+Local verification covers unchanged inventories, timestamp-preserving edits,
+renames/moves/deletions, saved references, incomplete scans, offline roots,
+native notifications, pause/resume, source states, overflow recovery, and shutdown.
+The fixtures and verification sources are maintained privately.
 
-Actual Windows tests cover creation, timestamp-preserving overwrite, ordinary
-and case-only rename, moves to new subdirectories, deletion, partial media that
-becomes valid, pause/resume catch-up, source status, and bounded shutdown with
-no roots. Controlled coalescing tests cover duplicate hints and bounded overflow;
-metadata/waveform tests cover explicit event-loss recovery and preserved stamps.
-A release Windows capture was visually checked. These checks do not certify
-every external disk, NAS, volume replacement, or file-watcher failure mode.
+The [100,000-file measurement](INDEXING-BASELINE.md) records generated WAV
+inventory timings and native update latency. Worker readiness, indexed results,
+rendered interaction, and audible output are distinct milestones.
 
-See [the 100,000-file measurement](INDEXING-BASELINE.md) for actual generated WAV
-inventory timings, native update latency, and the limits of the idle observation.
-Warm startup of the index worker is distinct from a usable rendered desktop.
-Notification-to-index timing is distinct from interaction or audible latency.
+Full inventories enumerate directories and compare inexpensive signatures.
+Size/timestamps are not content hashes and cannot detect every offline edit
+that deliberately preserves them. Notifications can be coalesced or lost;
+recovery converges after changes settle rather than providing an atomic
+filesystem snapshot. External drives, NAS, volume replacement, and broad
+notification-failure conditions still need qualification.
 
-Full inventories necessarily enumerate directories and compare cheap signatures.
-Signatures are not content hashes and cannot prove content identity after an
-offline edit that deliberately preserved size/timestamps. AI analysis, exact
-hash deduplication, durable reference relinking, and broad disk/device support
-are separate checkpoints. Watch notifications can be coalesced or lost; they
-are not an atomic filesystem snapshot. Recovery converges after changes settle.
-
-## Dependency decision
-
-The pinned backend was checked against its shipped source, feature flags,
-license, shutdown/retry protocol, and live Windows behavior. Its queue-mediated
-native design reports OS/client losses explicitly and preserves native UTF-16
-names. This fit the Windows-first prototype without an async runtime or service.
-The initially evaluated notify 8.2.0 backend ignores `_bytes_written` in its
-Windows completion handler and does not report every loss path required here;
-it was removed before delivery. Relevant primary sources:
-[backend documentation](https://docs.rs/windows-file-watcher/0.2.2/windows_file_watcher/),
-[notify 8.2.0 Windows source](https://docs.rs/crate/notify/8.2.0/source/src/windows.rs).
+The pinned `windows-file-watcher` backend reports loss explicitly and preserves
+native UTF-16 names. Its notification queue and owned Windows events support
+blocking consumption and controlled shutdown. See
+[backend documentation](https://docs.rs/windows-file-watcher/0.2.2/windows_file_watcher/).

@@ -125,8 +125,8 @@ executable and working directory.
 | `catalog.collections.sqlite` | Durable collections and favorites |
 | `catalog.waveforms.sqlite` | Rebuildable waveform cache |
 
-Use `--database PATH` to choose a separate catalog for experiments. Do not delete
-the durable databases to clear the index or cache.
+`--database PATH` selects a separate catalog for experiments. The library and
+collection databases hold durable data independently of the rebuildable index/cache.
 
 ## Development
 
@@ -167,6 +167,6 @@ Use `--database PATH` to isolate a test. Queries return at most 128 results per 
 | Browser and saved sounds | [Libraries](docs/LIBRARIES.md), [Collections](docs/COLLECTIONS.md), [Favorites](docs/FAVORITES.md) |
 | Audio and file transfer | [Preview](docs/PREVIEW.md), [Drag and drop](docs/DRAG-AND-DROP.md) |
 | Files and live updates | [Incremental indexing](docs/INDEXING.md) |
-| Design and behavior | [Architecture](docs/ARCHITECTURE.md), [Product requirements](docs/PRODUCT.md) |
+| Design and behavior | [Architecture](docs/ARCHITECTURE.md), [Product overview](docs/PRODUCT.md) |
 | Resource use and evidence | [Performance](docs/PERFORMANCE.md), [Renderer baseline](docs/BASELINE.md), [Index measurements](docs/INDEXING-BASELINE.md) |
 | Brand assets | [SVG masters and transparent PNG exports](assets/brand/README.md) |

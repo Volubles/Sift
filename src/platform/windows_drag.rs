@@ -1,4 +1,4 @@
-//! The only unsafe boundary: apartment-local OLE objects and owned HGLOBAL data.
+//! Apartment-local OLE objects and owned HGLOBAL file-reference data.
 #![allow(unsafe_code)]
 
 use std::mem::ManuallyDrop;
