@@ -10,6 +10,8 @@ use crate::collections::{
 };
 use crate::search::{PAGE_SIZE, SearchQuery};
 
+use super::sound_table::{reference_row, table_heading};
+
 #[derive(Default)]
 pub(super) struct Favorites {
     pub(super) query_text: String,
@@ -305,7 +307,7 @@ impl Favorites {
         let mut needed = BTreeSet::new();
         let mut action = None;
         let mut remove = None;
-        super::table_heading(ui);
+        table_heading(ui);
         egui::ScrollArea::vertical()
             .id_salt(("favorites", self.view_generation))
             .auto_shrink([false, false])
@@ -325,7 +327,7 @@ impl Favorites {
                             {
                                 remove = Some(sound.reference.source.clone());
                             }
-                            let response = super::reference_row(
+                            let response = reference_row(
                                 ui,
                                 &sound.reference,
                                 &sound.availability,
@@ -505,7 +507,7 @@ mod tests {
                 |ui| {
                     ui.horizontal(|ui| {
                         let star = star_button(ui, status, true, &reference.name);
-                        let row = super::super::reference_row(
+                        let row = reference_row(
                             ui,
                             &reference,
                             &crate::collections::Availability::Ready,

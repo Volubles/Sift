@@ -1,8 +1,9 @@
 # Technical direction
 
 This document combines intended architecture and the first implemented slice.
-`library`, `catalog`, and `search` now provide scanning, metadata probing,
-SQLite persistence, and bounded queries; other areas remain planned. Rust 1.98.1,
+`library`, `catalog`, and `search` provide scanning, metadata probing,
+SQLite persistence, and bounded queries. Later sections also describe intended
+boundaries for future features. Rust 1.98.1,
 rusqlite 0.40.2, and Symphonia 0.6.1 are pinned and verified for this slice.
 
 The desktop slice provides `desktop`, `worker`, and `config`. egui/eframe 0.36.2 renders
@@ -16,6 +17,14 @@ worker, with their own generations and a bounded desktop tree cache. Selected
 source validation has another generation family on that read worker.
 Workers block when idle and wake the UI on results. Shutdown cancels scanning,
 disconnects channels, and joins workers without an event-queue deadlock.
+
+`desktop.rs` coordinates selection, worker events, and the window's panels.
+`desktop::preview` presents playback controls, the waveform, and selected-source
+details. `desktop::sound_table` owns the shared Library/Favorites table widgets
+and their click/drag interaction tests. Library, collection, and favorite view
+state remains in its respective desktop module. Presentation modules perform
+no database or file I/O; the existing workers retain those responsibilities.
+
 The [live index](INDEXING.md) adds one native notification consumer, bounded
 coalescing, event-loss recovery, and OS thread-pool directory subscriptions.
 The consumer blocks when idle; filesystem inspection/SQL remain on the index
