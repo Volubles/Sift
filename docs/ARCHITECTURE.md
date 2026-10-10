@@ -49,6 +49,14 @@ independent read-only connection. A separate collection worker owns saved edits
 and favorite reads. Accepted durable changes drain during shutdown even when
 completion events are no longer read by the UI.
 
+Collection group commands carry the captured query, folder scope, native marks,
+and destination ID. The collection actor resolves the full marked set before
+saving, using one lazy read-only catalog connection for library selections.
+Favorites and collection inputs use its durable connection. Resolution returns
+at most 128 references; larger or changed explicit sets fail without saving a
+prefix. Removal resolves membership and deletes in the same transaction without
+inspecting source files. Accepted group commands also drain during shutdown.
+
 ## Paths and identity
 
 Windows locators are stored as little-endian UTF-16 bytes, including unpaired
@@ -74,6 +82,12 @@ and resolve on existing workers in one SQL snapshot. Replies and mark sets have
 path-count/byte bounds. Generations reject obsolete ranges, while marking and
 keyboard navigation leave durable data and original audio untouched. See
 [Selection](SELECTION.md).
+
+Internal drags carry an immutable selection intent. The add button uses the last
+used sound list; selecting a collection destination retains one bounded prior
+collection snapshot until the user makes new marks there. SQL and source checks
+remain off the UI thread, and failed group edits retain the captured command for
+retry or discard.
 
 Workers wait for requests or native signals while idle and request a repaint
 when results arrive. The UI performs presentation and submits short commands;

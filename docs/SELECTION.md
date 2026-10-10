@@ -55,9 +55,23 @@ toggles the committed state transactionally and returns the resulting state;
 an older status reply cannot undo it. Existing favorites can still be removed
 when their source is offline.
 
-Adding to a collection, removing an entry, and outgoing dragging currently act
-on one active/dragged sound. Group collection edits and copy dragging are a
-separate integration step; marking several rows does not imply group export.
+**Add selected sounds** uses the marks from the last used sound list. Internal
+drags from Libraries, Favorites, or a collection carry the entire marked group.
+Dragging an unmarked row replaces the marks with that row. Selecting a collection
+destination retains prior collection marks until you make a new selection there.
+**Remove selected** removes the current collection's marked references. A marked
+row's context menu removes its marked group; an unmarked row removes only itself.
+
+Each group action accepts 1 to 128 sounds, including marked sounds outside loaded
+pages. Ctrl+A resolves the captured query and scope on the storage worker; explicit
+marks resolve exact native paths in that view. Missing explicit members, oversized
+groups, and pending ranges fail visibly without committing a partial operation.
+Accepted commands keep their source view and destination even if you switch views.
+Failed saves retain the command for retry or discard. Duplicate additions keep
+one reference per source in a collection; removal also works for offline sources.
+
+Outgoing dragging still copies one sound. A group crossing the window boundary
+shows a message asking for a single sound rather than copying only part of it.
 Source audio and durable saved data are not altered by marking or navigation.
 
 Local verification covers native-locator range resolution, scope boundaries,

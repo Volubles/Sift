@@ -49,6 +49,21 @@ pub(super) enum Action {
 }
 
 impl Favorites {
+    pub(super) fn selected_count(&self) -> usize {
+        self.selection.count(self.total)
+    }
+
+    pub(super) fn selected_references(
+        &self,
+    ) -> Result<crate::collections::ReferenceSelection, String> {
+        Ok(crate::collections::ReferenceSelection {
+            origin: crate::collections::SelectionOrigin::Favorites {
+                query: self.query.clone(),
+            },
+            sources: self.selection.snapshot(self.total)?,
+        })
+    }
+
     pub(super) fn has_focus(&self, context: &egui::Context) -> bool {
         self.selection.has_focus(context)
     }

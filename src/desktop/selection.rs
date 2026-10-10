@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::collections::Reference;
+use crate::collections::{Reference, ReferenceSelection};
 use eframe::egui::{self, Event, Key, Modifiers};
 
 use super::SoundKey;
@@ -68,7 +68,38 @@ pub(super) struct Selection {
     active_reference: Option<Reference>,
 }
 
+#[derive(Clone)]
+pub(super) struct SoundDrag {
+    pub primary: Reference,
+    pub selection: ReferenceSelection,
+    pub count: usize,
+}
+
 impl Selection {
+    pub(super) fn count(&self, total: usize) -> usize {
+        if self.all {
+            total.saturating_sub(self.keys.len())
+        } else {
+            self.keys.len()
+        }
+    }
+
+    pub(super) fn snapshot(&self, total: usize) -> Result<crate::search::SourceSelection, String> {
+        if self.range.is_some() || self.navigation.is_some() {
+            return Err("Wait for the selection to finish, then try again".into());
+        }
+        let count = self.count(total);
+        if count == 0 || count > crate::search::MAX_ACTION_SOUNDS {
+            return Err(crate::search::SelectionError::InvalidSize.to_string());
+        }
+        let paths = self.keys.iter().cloned().collect();
+        Ok(if self.all {
+            crate::search::SourceSelection::AllExcept(paths)
+        } else {
+            crate::search::SourceSelection::Only(paths)
+        })
+    }
+
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
@@ -421,11 +452,7 @@ impl Selection {
         if self.range.is_some() {
             ui.label(egui::RichText::new("Marking sounds...").small().weak());
         } else {
-            let count = if self.all {
-                total.saturating_sub(self.keys.len())
-            } else {
-                self.keys.len()
-            };
+            let count = self.count(total);
             if count > 1 {
                 ui.label(
                     egui::RichText::new(format!("{count} sounds selected"))

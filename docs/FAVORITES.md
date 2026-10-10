@@ -11,8 +11,9 @@ the activity rail opens a dedicated table with its own search. Selection uses
 `FavoriteId`, separate from catalog and collection IDs.
 
 Favorites share waveform, playback, source validation, and copy-only dragging
-with other views. Switching to Collections allows the selected favorite to be
-added there. Watched source changes refresh affected pages; **Refresh favorites**
+with other views. Mark favorites, then switch to Collections to add the group
+through **Add selected sounds**. Outgoing dragging still copies one sound.
+Watched source changes refresh affected pages; **Refresh favorites**
 checks unwatched or offline references.
 
 The focused list supports [multiple marks and W/S or Up/Down navigation](SELECTION.md).

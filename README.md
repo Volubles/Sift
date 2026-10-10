@@ -83,8 +83,10 @@ audition neighboring sounds. **F** toggles the active sound's favorite.
 
 Star a sound to save it in **Favorites**, available across libraries and
 collections. In **Collections**, use **Collections +** to create a selection,
-then **Add selected sound** or an internal drag to add a reference. Changes save
-automatically. A failed save remains visible for retry.
+then **Add selected sounds** or an internal group drag to add the marked references.
+**Remove selected** removes collection references and leaves source files intact.
+Group edits accept up to 128 sounds across pages. Changes save automatically;
+a failed save remains visible for retry.
 
 ### Copy into your workflow
 
@@ -113,8 +115,9 @@ the gesture. Original bytes and collection references stay in place.
 The index recognizes **WAV, FLAC, MP3, and AIFF**. Container metadata support does
 not guarantee playback of every codec variant or compatibility with every device.
 
-Collection adds/removals and outgoing dragging currently act on one sound.
-Group actions, collection folders and item ordering, tags,
+Collection adds/removals support groups of up to 128 sounds. Outgoing dragging
+currently copies one sound.
+Outgoing group copying, collection folders and item ordering, tags,
 application-managed export, and explicit relinking of moved
 saved sources are later work. Similarity search is optional future work.
 

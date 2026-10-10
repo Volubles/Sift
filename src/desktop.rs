@@ -31,7 +31,7 @@ use preview::Preview;
 mod selection;
 mod sound_table;
 use libraries::{Action as LibraryAction, Libraries};
-use selection::{Gesture, Selection};
+use selection::{Gesture, Selection, SoundDrag};
 use sound_table::{table_heading, table_row};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -86,8 +86,9 @@ pub fn run(options: Options) -> eframe::Result {
             let drag_context = context.clone();
             let drags = DragWorker::start(move || drag_context.request_repaint())?;
             let collection_context = context.clone();
-            let collection_worker = CollectionWorker::start(
+            let collection_worker = CollectionWorker::start_with_catalog(
                 crate::collections::data_path(&options.database),
+                Some(options.database.clone()),
                 move || collection_context.request_repaint(),
             )?;
             Ok(Box::new(Browser::new(
@@ -129,6 +130,7 @@ struct Browser {
     favorite_paths_dirty: bool,
     libraries: Libraries,
     sidebar: Sidebar,
+    marked_view: Sidebar,
     drag_error: Option<String>,
     query_text: String,
     query: SearchQuery,
@@ -174,6 +176,7 @@ impl Browser {
             drags,
             collections,
             libraries: Libraries::default(),
+            marked_view: Sidebar::Libraries,
             sidebar: if options.smoke_screenshot.is_some() {
                 match std::env::var("SIFT_SMOKE_VIEW").as_deref() {
                     Ok("favorites") => Sidebar::Favorites,
@@ -221,6 +224,46 @@ impl Browser {
         self.view_generation += 1;
         self.total = 0;
         self.refresh_query();
+    }
+
+    fn marked_count(&self) -> usize {
+        match self.marked_view {
+            Sidebar::Libraries => self.selection.count(self.total),
+            Sidebar::Collections => self.collections.marked_count(),
+            Sidebar::Favorites => self.collections.favorites.selected_count(),
+        }
+    }
+
+    fn marked_selection(&self) -> Result<crate::collections::ReferenceSelection, String> {
+        match self.marked_view {
+            Sidebar::Libraries => Ok(crate::collections::ReferenceSelection {
+                origin: crate::collections::SelectionOrigin::Library {
+                    query: self.query.clone(),
+                    scope: self.libraries.scope(),
+                },
+                sources: self.selection.snapshot(self.total)?,
+            }),
+            Sidebar::Collections => self.collections.selected_references(),
+            Sidebar::Favorites => self.collections.favorites.selected_references(),
+        }
+    }
+
+    fn sound_drag(&mut self, context: &egui::Context, primary: Reference, view: Sidebar) {
+        self.marked_view = view;
+        match self.marked_selection() {
+            Ok(selection) => {
+                self.drag_error = None;
+                egui::DragAndDrop::set_payload(
+                    context,
+                    SoundDrag {
+                        primary,
+                        selection,
+                        count: self.marked_count(),
+                    },
+                );
+            }
+            Err(error) => self.drag_error = Some(error),
+        }
     }
 
     fn refresh_query(&mut self) {
@@ -775,6 +818,7 @@ impl Browser {
             self.collections.toggle_favorite(&reference);
         }
         if let Some((sample, index, gesture)) = choice {
+            self.marked_view = Sidebar::Libraries;
             self.selection
                 .choose(SoundKey::Library(sample.id), index, &sample.source, gesture);
             self.selection.remember(Reference::from(&sample));
@@ -802,7 +846,7 @@ impl Browser {
             let reference = Reference::from(&sample);
             self.selection.remember(reference.clone());
             self.select_sample(sample);
-            egui::DragAndDrop::set_payload(ui.ctx(), reference);
+            self.sound_drag(ui.ctx(), reference, Sidebar::Libraries);
         }
         for offset in needed {
             self.request_page(offset);
@@ -1026,6 +1070,15 @@ impl eframe::App for Browser {
             .set_active(self.sidebar == Sidebar::Favorites);
         self.input_events += ui.input(|input| input.events.len()) as u64;
         let ctx = ui.ctx().clone();
+        // Keep the most recently used sound list when a sidebar/button takes
+        // focus. Opening Collections must not substitute its first cached row.
+        if self.selection.has_focus(&ctx) {
+            self.marked_view = Sidebar::Libraries;
+        } else if self.collections.favorites.has_focus(&ctx) {
+            self.marked_view = Sidebar::Favorites;
+        } else if self.collections.sound_has_focus(&ctx) {
+            self.marked_view = Sidebar::Collections;
+        }
         if self.drags.busy()
             && (ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
                 || ctx.input(|input| input.pointer.button_released(egui::PointerButton::Primary)))
@@ -1073,7 +1126,7 @@ impl eframe::App for Browser {
                     ui.heading("Favorites");
                     ui.separator();
                     ui.label("Starred sounds from all libraries and collections.");
-                    ui.label("Drag a sound out to copy it, or switch to Collections to save the selected sound there.");
+                    ui.label("Select sounds, then switch to Collections to save them together. Drag one sound out to copy it.");
                     if ui.button("Refresh favorites").clicked() { self.collections.favorites.reset_query(); }
                     return;
                 }
@@ -1083,14 +1136,21 @@ impl eframe::App for Browser {
                 };
                 if let Some(action) =
                     self.collections
-                        .ui(ui, self.preview.selected(), selected_entry)
+                        .ui(ui, self.preview.selected(), selected_entry, self.marked_count())
                 {
                     match action {
-                        CollectionAction::Select(entry) => self.select_entry(entry),
+                        CollectionAction::Select(entry) => {
+                            self.marked_view = Sidebar::Collections;
+                            self.select_entry(entry);
+                        }
                         CollectionAction::Drag(entry) => {
                             let reference = entry.reference.clone();
                             self.select_entry(entry);
-                            egui::DragAndDrop::set_payload(&ctx, reference);
+                            self.sound_drag(&ctx, reference, Sidebar::Collections);
+                        }
+                        CollectionAction::AddMarked(collection) => {
+                            let selection = self.marked_selection();
+                            self.collections.add_selected(collection, selection);
                         }
                     }
                 }
@@ -1117,11 +1177,14 @@ impl eframe::App for Browser {
                         .favorite_list(ui, selected, self.preview.selected())
                 {
                     match action {
-                        FavoriteAction::Select(sound) => self.select_favorite(sound),
+                        FavoriteAction::Select(sound) => {
+                            self.marked_view = Sidebar::Favorites;
+                            self.select_favorite(sound);
+                        }
                         FavoriteAction::Drag(sound) => {
                             let reference = sound.reference.clone();
                             self.select_favorite(sound);
-                            egui::DragAndDrop::set_payload(&ctx, reference);
+                            self.sound_drag(&ctx, reference, Sidebar::Favorites);
                         }
                     }
                 }
@@ -1132,11 +1195,39 @@ impl eframe::App for Browser {
         if !self.drags.busy()
             && DragWorker::supported()
             && ctx.input(external_drag_requested)
+            && egui::DragAndDrop::has_payload_of_type::<SoundDrag>(&ctx)
+            && let Some(drag) = egui::DragAndDrop::take_payload::<SoundDrag>(&ctx)
+        {
+            if drag.count == 1 {
+                self.begin_drag(drag.primary.clone());
+            } else {
+                self.drag_error = Some(
+                    "Drag one sound to copy outside Sift. Groups can be dropped into collections."
+                        .into(),
+                );
+            }
+        }
+        if !self.drags.busy()
+            && DragWorker::supported()
+            && ctx.input(external_drag_requested)
+            && egui::DragAndDrop::has_payload_of_type::<Reference>(&ctx)
             && let Some(reference) = egui::DragAndDrop::take_payload::<Reference>(&ctx)
         {
             self.begin_drag((*reference).clone());
         }
-        if let Some(reference) = egui::DragAndDrop::payload::<Reference>(&ctx)
+        let drag_label = egui::DragAndDrop::payload::<SoundDrag>(&ctx)
+            .map(|drag| {
+                if drag.count == 1 {
+                    drag.primary.name.clone()
+                } else {
+                    format!("{} sounds · collections", drag.count)
+                }
+            })
+            .or_else(|| {
+                egui::DragAndDrop::payload::<Reference>(&ctx)
+                    .map(|reference| reference.name.clone())
+            });
+        if let Some(label) = drag_label
             && let Some(position) = ctx.pointer_interact_pos()
         {
             let painter = ctx.layer_painter(egui::LayerId::new(
@@ -1146,7 +1237,7 @@ impl eframe::App for Browser {
             painter.text(
                 position + egui::vec2(16.0, 18.0),
                 egui::Align2::LEFT_TOP,
-                &reference.name,
+                &label,
                 egui::FontId::proportional(13.0),
                 Color32::from_rgb(135, 222, 194),
             );

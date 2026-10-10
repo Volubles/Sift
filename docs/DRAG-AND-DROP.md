@@ -25,12 +25,17 @@ modal loop. The reset lets the row accept another click or drag after native com
 
 The adapter is available through the `native-drag` feature, which desktop enables
 by default. It supports multiple references internally; the current desktop
-selects and drags one sound. Other platforms do not claim outgoing native drag
-support yet.
+offers one sound for outgoing copying. Other platforms do not claim outgoing
+native drag support yet.
 
 Collections add an internal egui drag phase: a held drag within Sift can add a
-reference to a collection name. Native copying starts only when the primary
-drag leaves the client area. The copy-only/self-drop safeguards then apply;
+marked group of up to 128 references to a collection name or its contents heading.
+The payload captures its source view, query/scope, and native marks; storage
+resolves the full group in the background before saving. Single-reference drags
+from the details control still work. A multi-sound group crossing the client
+boundary shows an actionable message instead of copying only its active row.
+Native copying starts when a single-sound drag leaves the client area.
+The copy-only/self-drop safeguards then apply;
 returning inside after native handoff ends quietly. See [Collections](COLLECTIONS.md).
 
 ## Threads, bounds, and native safety

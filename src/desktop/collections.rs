@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, path::PathBuf};
 use super::favorites::{Favorites, star_button};
 use super::{
     SoundKey,
-    selection::{self, Gesture, Selection},
+    selection::{self, Gesture, Selection, SoundDrag},
 };
 use eframe::egui::{self, Color32, RichText};
 
@@ -14,6 +14,7 @@ use crate::collections::{
 
 pub(super) struct Collections {
     selection: Selection,
+    previous_marks: Option<CollectionMarks>,
     worker: Worker,
     pub(super) favorites: Favorites,
     pub(super) favorite_paths_dirty: bool,
@@ -24,6 +25,7 @@ pub(super) struct Collections {
     groups_pending: bool,
     groups_failed: bool,
     entries: Option<Page<Entry>>,
+    entries_total: usize,
     entries_generation: u64,
     entries_offset: usize,
     entries_pending: bool,
@@ -33,6 +35,12 @@ pub(super) struct Collections {
     save: Option<PendingSave>,
     operation: u64,
     dialog: Option<Dialog>,
+}
+
+struct CollectionMarks {
+    collection: CollectionId,
+    sources: Result<crate::search::SourceSelection, String>,
+    count: usize,
 }
 
 struct PendingSave {
@@ -57,12 +65,72 @@ enum Dialog {
 pub(super) enum Action {
     Select(Entry),
     Drag(Entry),
+    AddMarked(CollectionId),
 }
 
 impl Collections {
+    pub(super) fn selected_count(&self) -> usize {
+        self.selection.count(self.entries_total)
+    }
+
+    pub(super) fn marked_count(&self) -> usize {
+        self.previous_marks
+            .as_ref()
+            .map_or_else(|| self.selected_count(), |marks| marks.count)
+    }
+
+    pub(super) fn selected_references(
+        &self,
+    ) -> Result<crate::collections::ReferenceSelection, String> {
+        if let Some(marks) = &self.previous_marks {
+            return Ok(crate::collections::ReferenceSelection {
+                origin: crate::collections::SelectionOrigin::Collection(marks.collection),
+                sources: marks.sources.clone()?,
+            });
+        }
+        let collection = self.active.ok_or("Choose a collection")?;
+        Ok(crate::collections::ReferenceSelection {
+            origin: crate::collections::SelectionOrigin::Collection(collection),
+            sources: self.selection.snapshot(self.entries_total)?,
+        })
+    }
+
+    pub(super) fn add_selected(
+        &mut self,
+        collection: CollectionId,
+        selection: Result<crate::collections::ReferenceSelection, String>,
+    ) {
+        match selection {
+            Ok(selection) if self.can_edit() => {
+                self.error = None;
+                self.mutate(Mutation::AddSelected {
+                    collection,
+                    selection,
+                });
+            }
+            Err(error) => self.error = Some(error),
+            _ => {}
+        }
+    }
+
+    fn remove_selected(&mut self, collection: CollectionId) {
+        let total = self.entries_total;
+        match self.selection.snapshot(total) {
+            Ok(selection) => {
+                self.error = None;
+                self.mutate(Mutation::RemoveSelected {
+                    collection,
+                    selection,
+                });
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
     pub(super) fn new(worker: Worker) -> Self {
         Self {
             selection: Selection::default(),
+            previous_marks: None,
             worker,
             favorites: Favorites::default(),
             favorite_paths_dirty: true,
@@ -73,6 +141,7 @@ impl Collections {
             groups_pending: false,
             groups_failed: false,
             entries: None,
+            entries_total: 0,
             entries_generation: 0,
             entries_offset: 0,
             entries_pending: false,
@@ -154,6 +223,7 @@ impl Collections {
                     self.entries_pending = false;
                     match result {
                         Ok(page) => {
+                            self.entries_total = page.total;
                             for (position, entry) in page.rows.iter().enumerate() {
                                 self.selection.observe(
                                     SoundKey::Collection(entry.id),
@@ -187,12 +257,25 @@ impl Collections {
                             if let Some(source) = self
                                 .save
                                 .as_ref()
+                                .filter(|save| matches!(&save.mutation, Mutation::Remove { collection, .. } if Some(*collection) == self.active))
                                 .and_then(|save| save.removed_source.as_ref())
                             {
                                 self.selection.forget(source);
                             }
                             self.save = None;
                             self.dialog = None;
+                            let removed_collection = match &change {
+                                Change::Removed { collection, .. }
+                                | Change::Deleted(collection) => Some(*collection),
+                                _ => None,
+                            };
+                            if self
+                                .previous_marks
+                                .as_ref()
+                                .is_some_and(|marks| Some(marks.collection) == removed_collection)
+                            {
+                                self.previous_marks = None;
+                            }
                             match change {
                                 Change::Created(id) => {
                                     self.activate(id);
@@ -205,11 +288,21 @@ impl Collections {
                                 Change::Updated(id) if self.active == Some(id) => {
                                     self.refresh_entries()
                                 }
+                                Change::Removed {
+                                    collection,
+                                    sources,
+                                } if self.active == Some(collection) => {
+                                    for source in sources {
+                                        self.selection.forget(&source);
+                                    }
+                                    self.refresh_entries();
+                                }
                                 Change::Deleted(id) if self.active == Some(id) => {
                                     self.selection.reset();
                                     self.favorite_paths_dirty = true;
                                     self.active = None;
                                     self.entries = None;
+                                    self.entries_total = 0;
                                     self.entries_generation += 1;
                                 }
                                 _ => {}
@@ -232,8 +325,25 @@ impl Collections {
     }
 
     fn activate(&mut self, id: CollectionId) {
+        if self.active == Some(id) {
+            return;
+        }
+        // Choosing an add destination must not replace the source marks with
+        // the first row of that destination. Keep one bounded prior snapshot
+        // until the user makes a new selection in the current collection.
+        if self.previous_marks.is_none()
+            && self.selected_count() > 0
+            && let Some(collection) = self.active
+        {
+            self.previous_marks = Some(CollectionMarks {
+                collection,
+                sources: self.selection.snapshot(self.entries_total),
+                count: self.selected_count(),
+            });
+        }
         self.selection.reset();
         self.active = Some(id);
+        self.entries_total = 0;
         self.entries_offset = 0;
         self.refresh_entries();
     }
@@ -378,7 +488,9 @@ impl Collections {
         ui: &mut egui::Ui,
         selected: Option<&Reference>,
         selected_entry: Option<EntryId>,
+        marked_count: usize,
     ) -> Option<Action> {
+        let mut action = None;
         self.request_pages();
         let can_edit = self.can_edit();
         ui.horizontal(|ui| {
@@ -419,7 +531,10 @@ impl Collections {
                         if response.clicked() {
                             activate = Some(group.id);
                         }
-                        if can_edit && response.dnd_hover_payload::<Reference>().is_some() {
+                        if can_edit
+                            && (response.dnd_hover_payload::<Reference>().is_some()
+                                || response.dnd_hover_payload::<SoundDrag>().is_some())
+                        {
                             ui.painter().rect_stroke(
                                 response.rect,
                                 0.0,
@@ -427,10 +542,8 @@ impl Collections {
                                 egui::StrokeKind::Inside,
                             );
                         }
-                        if can_edit
-                            && let Some(reference) = response.dnd_release_payload::<Reference>()
-                        {
-                            add = Some((group.id, (*reference).clone()));
+                        if can_edit && let Some(mutation) = dropped_sounds(&response, group.id) {
+                            add = Some(mutation);
                         }
                         response.context_menu(|ui| {
                             if ui
@@ -475,11 +588,8 @@ impl Collections {
         if let Some(dialog) = dialog {
             self.dialog = Some(dialog);
         }
-        if let Some((collection, reference)) = add {
-            self.mutate(Mutation::Add {
-                collection,
-                references: vec![reference],
-            });
+        if let Some(mutation) = add {
+            self.mutate(mutation);
         }
         ui.add_space(10.0);
         ui.separator();
@@ -492,19 +602,22 @@ impl Collections {
         let response = ui.heading(active_name);
         if can_edit
             && let Some(collection) = self.active
-            && let Some(reference) = response.dnd_release_payload::<Reference>()
+            && let Some(mutation) = dropped_sounds(&response, collection)
         {
-            self.mutate(Mutation::Add {
-                collection,
-                references: vec![(*reference).clone()],
-            });
+            self.mutate(mutation);
         }
-        let mut action = None;
         let mut remove = None;
         let mut favorite = None;
         let focus_id = ui.make_persistent_id("collection-sound-focus");
         let total = self.entries.as_ref().map_or(0, |page| page.total);
+        let selection_generation = self.selection.generation();
         let favorite_key = self.selection.keyboard(ui, focus_id, total);
+        if favorite_key
+            || self.selection.generation() != selection_generation
+            || self.selection.target().is_some()
+        {
+            self.previous_marks = None;
+        }
         self.selection.feedback(ui, total);
         let target = self.selection.target();
         let mut choice = target.and_then(|(index, gesture)| {
@@ -518,16 +631,26 @@ impl Collections {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
-                        can_edit && selected.is_some(),
-                        egui::Button::new("Add selected sound"),
+                        can_edit && marked_count > 0,
+                        egui::Button::new(format!("Add selected sounds ({marked_count})")),
                     )
                     .clicked()
-                    && let Some(reference) = selected
                 {
-                    self.mutate(Mutation::Add {
-                        collection,
-                        references: vec![reference.clone()],
-                    });
+                    action = Some(Action::AddMarked(collection));
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        can_edit && self.selected_count() > 0,
+                        egui::Button::new("Remove selected"),
+                    )
+                    .on_hover_text(
+                        "Remove marked references from this collection; source files stay in place",
+                    )
+                    .clicked()
+                {
+                    self.remove_selected(collection);
                 }
                 if ui
                     .button("Refresh")
@@ -543,7 +666,7 @@ impl Collections {
                 .filter(|page| page.offset == self.entries_offset)
             {
                 if page.total == 0 {
-                    ui.label("Drag a sound onto the collection above, or add the selected sound.");
+                    ui.label("Drop sounds onto the collection above, or add the marked sounds.");
                 }
                 let height = (ui.available_height() - 86.0).max(80.0);
                 self.selection
@@ -625,6 +748,7 @@ impl Collections {
                                     }
                                     self.selection
                                         .activate(key, position, &entry.reference.source);
+                                    self.previous_marks = None;
                                     selection::focus(ui, focus_id);
                                     choice = None;
                                     action = Some(Action::Drag(entry.clone()));
@@ -633,11 +757,25 @@ impl Collections {
                                     if ui
                                         .add_enabled(
                                             can_edit,
-                                            egui::Button::new("Remove from collection"),
+                                            egui::Button::new(
+                                                if self
+                                                    .selection
+                                                    .contains(&entry.reference.source, position)
+                                                    && self.selection.count(total) > 1
+                                                {
+                                                    "Remove selected sounds"
+                                                } else {
+                                                    "Remove from collection"
+                                                },
+                                            ),
                                         )
                                         .clicked()
                                     {
-                                        remove = Some(entry.id);
+                                        remove = Some((
+                                            entry.id,
+                                            self.selection
+                                                .contains(&entry.reference.source, position),
+                                        ));
                                         ui.close();
                                     }
                                 });
@@ -658,13 +796,18 @@ impl Collections {
             } else {
                 ui.label("Loading saved sounds...");
             }
-            if let Some(entry) = remove {
-                self.mutate(Mutation::Remove { collection, entry });
+            if let Some((entry, marked)) = remove {
+                if marked {
+                    self.remove_selected(collection);
+                } else {
+                    self.mutate(Mutation::Remove { collection, entry });
+                }
             }
         } else {
             ui.label("Choose a collection.");
         }
         if let Some((entry, index, gesture)) = choice {
+            self.previous_marks = None;
             self.selection.choose(
                 SoundKey::Collection(entry.id),
                 index,
@@ -835,6 +978,26 @@ impl Collections {
         if let Some(mutation) = submit {
             self.mutate(mutation);
         }
+    }
+}
+
+fn dropped_sounds(response: &egui::Response, collection: CollectionId) -> Option<Mutation> {
+    if egui::DragAndDrop::has_payload_of_type::<SoundDrag>(&response.ctx) {
+        response
+            .dnd_release_payload::<SoundDrag>()
+            .map(|drag| Mutation::AddSelected {
+                collection,
+                selection: drag.selection.clone(),
+            })
+    } else if egui::DragAndDrop::has_payload_of_type::<Reference>(&response.ctx) {
+        response
+            .dnd_release_payload::<Reference>()
+            .map(|reference| Mutation::Add {
+                collection,
+                references: vec![(*reference).clone()],
+            })
+    } else {
+        None
     }
 }
 
