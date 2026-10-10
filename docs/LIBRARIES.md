@@ -26,6 +26,14 @@ and repeated roots are coalesced. Search and count share a transaction snapshot;
 folders have bounded 64-row child pages. Display strings never locate files.
 Folders with indexed audio form the tree; empty directories are omitted.
 
+The header now shows a clickable native-path breadcrumb trail for the current
+bank/source/subfolder. Selecting an ancestor preserves the bank and search text.
+Deep paths collapse middle labels into an accessible menu while keeping their
+native targets. A single source named like its bank does not repeat that label.
+Revealing ancestors is bounded by the existing open-branch limit and performs
+no filesystem inspection. Tests cover Unicode targets, overlapping sources,
+deep paths, path validation, and clicking the trail back to the bank scope.
+
 Previous catalogue roots can be imported once without opening or rescanning
 their files. An import marker prevents removed banks from reappearing on restart.
 Offline sources retain cached records and registrations. Availability checks run

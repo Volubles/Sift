@@ -9,6 +9,11 @@ use crate::worker::{EditOutcome, LibraryEdit, Workers};
 
 const MAX_OPEN_FOLDERS: usize = 32;
 
+struct Breadcrumb {
+    label: String,
+    folder: Option<PathBuf>,
+}
+
 #[derive(Default)]
 pub(super) struct Libraries {
     groups: Vec<Library>,
@@ -91,22 +96,160 @@ impl Libraries {
         )
     }
 
-    pub(super) fn label(&self) -> String {
+    fn breadcrumbs(&self) -> Vec<Breadcrumb> {
         let bank = self
             .groups
             .iter()
-            .find(|group| Some(group.id) == self.active)
-            .map_or("All libraries", |group| &group.name);
-        match &self.folder {
-            Some(folder) => format!(
-                "{bank} / {}",
-                folder
+            .find(|group| Some(group.id) == self.active);
+        let mut crumbs = vec![Breadcrumb {
+            label: bank
+                .map_or("All libraries", |bank| bank.name.as_str())
+                .to_owned(),
+            folder: None,
+        }];
+        let Some(folder) = &self.folder else {
+            return crumbs;
+        };
+        let roots = self.roots();
+        let Some(root) = roots
+            .iter()
+            .filter(|root| folder.starts_with(root))
+            .max_by_key(|root| root.components().count())
+        else {
+            return crumbs;
+        };
+        let skip_root = roots.len() == 1
+            && bank.is_some_and(|bank| {
+                root.file_name()
+                    .is_some_and(|name| name.to_string_lossy() == bank.name)
+            });
+        let mut ancestors: Vec<_> = folder
+            .ancestors()
+            .take_while(|path| path.starts_with(root))
+            .collect();
+        ancestors.reverse();
+        for path in ancestors {
+            if skip_root && path == root {
+                continue;
+            }
+            crumbs.push(Breadcrumb {
+                label: path
                     .file_name()
-                    .unwrap_or(folder.as_os_str())
+                    .unwrap_or(path.as_os_str())
                     .to_string_lossy()
-            ),
-            None => bank.to_owned(),
+                    .into_owned(),
+                folder: Some(path.to_path_buf()),
+            });
         }
+        crumbs
+    }
+
+    fn select_folder(&mut self, folder: Option<PathBuf>) {
+        if let Some(path) = &folder {
+            if path
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return;
+            }
+            if !self.roots().iter().any(|root| path.starts_with(root)) {
+                return;
+            }
+            // Native ancestors remain locators. No filesystem read or lossy
+            // display-to-path conversion is needed to reveal a saved scope.
+            let roots = self.roots();
+            let mut ancestors: Vec<_> = path
+                .ancestors()
+                .skip(1)
+                .take_while(|ancestor| roots.iter().any(|root| ancestor.starts_with(root)))
+                .collect();
+            ancestors.reverse();
+            for ancestor in ancestors {
+                if self.expanded.len() >= MAX_OPEN_FOLDERS {
+                    break;
+                }
+                self.expanded.insert(ancestor.to_path_buf());
+            }
+        }
+        self.folder = folder;
+    }
+
+    pub(super) fn breadcrumb_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let before = self.scope();
+        let crumbs = self.breadcrumbs();
+        let mut choice = None;
+        let width = (ui.available_width() / 3.0).clamp(90.0, 240.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            for (index, crumb) in crumbs.iter().enumerate() {
+                if crumbs.len() > 5 && index == 2 {
+                    ui.label(RichText::new("›").weak());
+                    ui.menu_button("…", |ui| {
+                        for hidden in &crumbs[2..crumbs.len() - 2] {
+                            if ui
+                                .button(&hidden.label)
+                                .on_hover_text(
+                                    hidden
+                                        .folder
+                                        .as_ref()
+                                        .map(|path| path.display().to_string())
+                                        .unwrap_or_default(),
+                                )
+                                .clicked()
+                            {
+                                choice = Some(hidden.folder.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                if crumbs.len() > 5 && (2..crumbs.len() - 2).contains(&index) {
+                    continue;
+                }
+                if index != 0 {
+                    ui.label(RichText::new("›").weak());
+                }
+                let text = RichText::new(&crumb.label).size(13.0);
+                let text = if index == crumbs.len() - 1 {
+                    text.strong()
+                } else {
+                    text.color(ui.visuals().weak_text_color())
+                };
+                let response = ui.add_sized(
+                    [
+                        width.min(
+                            ui.painter()
+                                .layout_no_wrap(
+                                    crumb.label.clone(),
+                                    egui::FontId::proportional(13.0),
+                                    ui.visuals().text_color(),
+                                )
+                                .size()
+                                .x
+                                + 14.0,
+                        ),
+                        24.0,
+                    ],
+                    egui::Button::new(text).frame(false).truncate(),
+                );
+                let response = response.on_hover_text(
+                    crumb
+                        .folder
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| {
+                            "All sounds in this library, including subfolders".into()
+                        }),
+                );
+                if response.clicked() {
+                    choice = Some(crumb.folder.clone());
+                }
+            }
+        });
+        if let Some(folder) = choice {
+            self.select_folder(folder);
+        }
+        before != self.scope()
     }
 
     pub(super) fn snapshot(&mut self, result: Result<Vec<Library>, String>) -> bool {
@@ -755,6 +898,128 @@ mod tests {
     use crate::worker::Event;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    fn browser_fixture(root: PathBuf) -> Libraries {
+        let mut panel = Libraries::default();
+        panel.snapshot(Ok(vec![Library {
+            id: LibraryId(1),
+            name: "Game audio".into(),
+            count: 12,
+            sources: vec![Source {
+                id: SourceId(1),
+                path: root,
+                count: 12,
+                availability: Availability::Offline,
+            }],
+        }]));
+        panel
+    }
+
+    #[test]
+    fn breadcrumbs_keep_native_ancestors_and_choose_the_most_specific_registered_root() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("Sound bank");
+        let leaf = root.join("Ambiences").join("森林");
+        let mut panel = browser_fixture(root.clone());
+        panel.select_folder(Some(leaf.clone()));
+        let crumbs = panel.breadcrumbs();
+        assert_eq!(
+            crumbs
+                .iter()
+                .map(|crumb| crumb.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Game audio", "Sound bank", "Ambiences", "森林"]
+        );
+        assert_eq!(crumbs[3].folder, Some(leaf));
+        assert!(panel.expanded.contains(&root.join("Ambiences")));
+        panel.select_folder(crumbs[2].folder.clone());
+        assert_eq!(panel.scope(), Scope::Folders(vec![root.join("Ambiences")]));
+        panel.groups[0].sources.push(Source {
+            id: SourceId(2),
+            path: root.join("Ambiences"),
+            count: 8,
+            availability: Availability::Online,
+        });
+        panel.select_folder(Some(root.join("Ambiences").join("Forest")));
+        assert_eq!(
+            panel
+                .breadcrumbs()
+                .iter()
+                .map(|crumb| crumb.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Game audio", "Ambiences", "Forest"]
+        );
+        panel.select_folder(None);
+        assert!(panel.folder.is_none());
+    }
+
+    #[test]
+    fn breadcrumb_revealing_is_bounded_and_rejects_paths_outside_registered_sources() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("Game audio");
+        let mut panel = browser_fixture(root.clone());
+        let path = root.join("Forest");
+        panel.select_folder(Some(path.clone()));
+        assert_eq!(
+            panel
+                .breadcrumbs()
+                .iter()
+                .map(|crumb| crumb.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Game audio", "Forest"]
+        );
+        panel.select_folder(Some(temporary.path().join("Game audio-other")));
+        assert_eq!(panel.folder, Some(path.clone()));
+        panel.select_folder(Some(root.join("..").join("outside")));
+        assert_eq!(panel.folder, Some(path));
+        let mut deep = root;
+        for _ in 0..48 {
+            deep.push("level");
+        }
+        panel.select_folder(Some(deep.clone()));
+        assert_eq!(panel.folder, Some(deep));
+        assert_eq!(panel.expanded.len(), MAX_OPEN_FOLDERS);
+    }
+
+    #[test]
+    fn clicking_a_breadcrumb_updates_scope_without_changing_the_bank() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("Sound bank");
+        let mut panel = browser_fixture(root.clone());
+        panel.select_folder(Some(root.join("Ambiences").join("Forest")));
+        let context = egui::Context::default();
+        let mut time = 0.0;
+        let mut run = |events| {
+            time += 0.02;
+            let mut changed = false;
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 300.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| changed = panel.breadcrumb_ui(ui),
+            );
+            output.textures_delta.clear();
+            changed
+        };
+        assert!(!run(vec![]));
+        let position = egui::pos2(40.0, 12.0);
+        let pointer = |pressed| egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(vec![egui::Event::PointerMoved(position), pointer(true)]);
+        assert!(run(vec![pointer(false)]));
+        assert_eq!(panel.active, Some(LibraryId(1)));
+        assert!(panel.folder.is_none());
+    }
 
     #[test]
     fn changing_bank_rejects_late_folders_and_preserves_native_scope_on_refresh() {

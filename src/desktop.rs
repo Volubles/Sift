@@ -822,18 +822,11 @@ impl Browser {
                 }
             });
         });
-        ui.label(
-            RichText::new(format!(
-                "Browsing: {}",
-                if self.sidebar == Sidebar::Favorites {
-                    "Favorites".to_owned()
-                } else {
-                    self.libraries.label()
-                }
-            ))
-            .small()
-            .color(Color32::from_rgb(135, 222, 194)),
-        );
+        if self.sidebar == Sidebar::Favorites {
+            ui.label(RichText::new("Favorites").small().strong());
+        } else if self.libraries.breadcrumb_ui(ui) {
+            self.reset_query();
+        }
         if !self.live_updates {
             ui.label(RichText::new(&self.watch_message).small().weak());
         }

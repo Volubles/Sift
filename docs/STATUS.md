@@ -46,6 +46,14 @@ No remote, publishing, or distribution license has been selected.
 
 ## Verification
 
+The Clear tree navigation checkpoint adds clickable bank/source/subfolder
+breadcrumbs above search. It preserves the native folder target and query text,
+reveals ancestors within the existing 32-branch limit, and compresses deep paths
+into a menu. Unicode, overlapping source roots, invalid scopes, deep paths,
+and breadcrumb-click interaction have regression coverage. Tree appearance and
+keyboard integration are the next part of this approved UI checkpoint.
+All 89 default-feature tests, formatting, and Clippy pass for this navigation step.
+
 Favorites are implemented in durable collection schema 2 with independent
 IDs/native references, transactional upgrade, indexed search, bounded membership
 reads, and shutdown-safe edits. Library/Collection rows share star status; the
