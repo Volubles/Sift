@@ -87,7 +87,9 @@ pub fn run(options: Options) -> eframe::Result {
             let audio_context = context.clone();
             let player = Player::start(move || audio_context.request_repaint())?;
             let drag_context = context.clone();
-            let drags = DragWorker::start(move || drag_context.request_repaint())?;
+            let drags = DragWorker::start_for_catalog(options.database.clone(), move || {
+                drag_context.request_repaint()
+            })?;
             let collection_context = context.clone();
             let collection_worker = CollectionWorker::start_with_catalog(
                 crate::collections::data_path(&options.database),
@@ -312,6 +314,9 @@ impl Browser {
     }
 
     fn sound_drag(&mut self, context: &egui::Context, primary: Reference, view: Sidebar) {
+        if self.drags.busy() {
+            return;
+        }
         self.marked_view = view;
         match self.marked_selection() {
             Ok(selection) => {
@@ -382,6 +387,9 @@ impl Browser {
     }
 
     fn accept_events(&mut self, ctx: &egui::Context) {
+        if self.drags.busy() && ctx.input_mut(cancel_file_drag_requested) {
+            self.drags.cancel();
+        }
         self.collections.poll();
         if self.sidebar == Sidebar::Collections
             && let Some(saved) = self.collections.take_preview_restore()
@@ -609,7 +617,17 @@ impl Browser {
     }
 
     fn begin_drag(&mut self, sample: Reference) {
-        self.drag_error = match self.drags.request(vec![sample.source]) {
+        let result = self.drags.request(vec![sample.source]);
+        self.drag_requested(result);
+    }
+
+    fn begin_group_drag(&mut self, selection: crate::collections::ReferenceSelection) {
+        let result = self.drags.request_selection(selection);
+        self.drag_requested(result);
+    }
+
+    fn drag_requested(&mut self, result: Result<(), DragError>) {
+        self.drag_error = match result {
             Ok(()) => None,
             Err(error) => {
                 if matches!(
@@ -621,6 +639,22 @@ impl Browser {
                 Some(format!("Could not drag the file: {error}"))
             }
         };
+    }
+
+    fn handoff_file_drag(&mut self, context: &egui::Context) {
+        if self.drags.busy() || !DragWorker::supported() || !context.input(external_drag_requested)
+        {
+            return;
+        }
+        if egui::DragAndDrop::has_payload_of_type::<SoundDrag>(context) {
+            if let Some(drag) = egui::DragAndDrop::take_payload::<SoundDrag>(context) {
+                self.begin_group_drag(Arc::unwrap_or_clone(drag).selection);
+            }
+        } else if egui::DragAndDrop::has_payload_of_type::<Reference>(context)
+            && let Some(reference) = egui::DragAndDrop::take_payload::<Reference>(context)
+        {
+            self.begin_drag(Arc::unwrap_or_clone(reference));
+        }
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
@@ -719,9 +753,9 @@ impl Browser {
         if self.drags.busy() {
             ui.horizontal(|ui| {
                 ui.label(if self.drags.native_active() {
-                    "Dragging a copy. Release in a folder, or press Esc to cancel."
+                    "Dragging copies. Release in a folder, or press Esc to cancel."
                 } else {
-                    "Preparing file copy. Keep the left mouse button held; Esc cancels."
+                    "Preparing copies. Keep the left mouse button held; Esc cancels."
                 });
                 if ui.button("Cancel file drag").clicked() {
                     self.drags.cancel();
@@ -1189,10 +1223,7 @@ impl eframe::App for Browser {
         } else if self.collections.sound_has_focus(&ctx) {
             self.marked_view = Sidebar::Collections;
         }
-        if self.drags.busy()
-            && (ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-                || ctx.input(|input| input.pointer.button_released(egui::PointerButton::Primary)))
-        {
+        if self.drags.busy() && ctx.input_mut(cancel_file_drag_requested) {
             self.drags.cancel();
         }
         egui::Panel::bottom("footer").show(ui, |ui| {
@@ -1233,7 +1264,7 @@ impl eframe::App for Browser {
                     ui.heading("Favorites");
                     ui.separator();
                     ui.label("Starred sounds from all libraries and collections.");
-                    ui.label("Select sounds, then switch to Collections to save them together. Drag one sound out to copy it.");
+                    ui.label("Select sounds, then drag the group out to copy it or switch to Collections to save references.");
                     if ui.button("Refresh favorites").clicked() { self.collections.favorites.reset_query(); }
                     return;
                 }
@@ -1298,35 +1329,13 @@ impl eframe::App for Browser {
                 self.list(ui);
             }
         });
-        if !self.drags.busy()
-            && DragWorker::supported()
-            && ctx.input(external_drag_requested)
-            && egui::DragAndDrop::has_payload_of_type::<SoundDrag>(&ctx)
-            && let Some(drag) = egui::DragAndDrop::take_payload::<SoundDrag>(&ctx)
-        {
-            if drag.count == 1 {
-                self.begin_drag(drag.primary.clone());
-            } else {
-                self.drag_error = Some(
-                    "Drag one sound to copy outside Sift. Groups can be dropped into collections."
-                        .into(),
-                );
-            }
-        }
-        if !self.drags.busy()
-            && DragWorker::supported()
-            && ctx.input(external_drag_requested)
-            && egui::DragAndDrop::has_payload_of_type::<Reference>(&ctx)
-            && let Some(reference) = egui::DragAndDrop::take_payload::<Reference>(&ctx)
-        {
-            self.begin_drag((*reference).clone());
-        }
+        self.handoff_file_drag(&ctx);
         let drag_label = egui::DragAndDrop::payload::<SoundDrag>(&ctx)
             .map(|drag| {
                 if drag.count == 1 {
                     drag.primary.name.clone()
                 } else {
-                    format!("{} sounds · collections", drag.count)
+                    format!("{} sounds", drag.count)
                 }
             })
             .or_else(|| {
@@ -1371,6 +1380,26 @@ fn external_drag_requested(input: &egui::InputState) -> bool {
                 .events
                 .iter()
                 .any(|event| matches!(event, egui::Event::PointerGone)))
+}
+
+fn cancel_file_drag_requested(input: &mut egui::InputState) -> bool {
+    let mut cancelled = input.pointer.button_released(egui::PointerButton::Primary);
+    input.events.retain(|event| {
+        if matches!(
+            event,
+            egui::Event::Key {
+                key: egui::Key::Escape,
+                pressed: true,
+                ..
+            }
+        ) {
+            cancelled = true;
+            false
+        } else {
+            true
+        }
+    });
+    cancelled
 }
 
 #[cfg(all(test, sift_local_tests))]

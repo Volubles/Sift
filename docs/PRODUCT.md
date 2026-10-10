@@ -47,8 +47,8 @@ devices, external drives, and network shares have individual qualification limit
 The core workflow works offline.
 
 Collection adds and removals accept marked groups of up to 128 sounds, including
-unloaded rows. Internal group dragging saves references; outgoing dragging
-currently copies one sound. Outgoing group copying, collection folders,
+unloaded rows. Internal group dragging saves references; outgoing dragging offers
+up to 128 marked originals to the destination as copies. Collection folders,
 user-controlled item ordering, tags, application-managed export, portable saved
 selections, and explicit source relinking are not implemented. Similarity search
 is optional future work. Recording, audio editing, cloud synchronization, and

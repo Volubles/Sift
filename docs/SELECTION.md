@@ -81,8 +81,10 @@ Accepted commands keep their source view and destination even if you switch view
 Failed saves retain the command for retry or discard. Duplicate additions keep
 one reference per source in a collection; removal also works for offline sources.
 
-Outgoing dragging still copies one sound. A group crossing the window boundary
-shows a message asking for a single sound rather than copying only part of it.
+Outgoing dragging offers the complete marked group of up to 128 original files.
+Selection lookup and file preparation run in the background using the captured
+source view. Releasing or pressing Esc during preparation cancels the gesture;
+late results cannot start a new drag. The details control offers its one sound.
 Source audio and durable saved data are not altered by marking or navigation.
 
 Local verification covers native-locator range resolution, scope boundaries,

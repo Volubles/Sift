@@ -122,6 +122,13 @@ message delivery. Native drag and watcher FFI are the scoped unsafe boundaries;
 safety comments document their handle, pointer, and thread contracts.
 See [Drag and drop](DRAG-AND-DROP.md).
 
+The same preparation worker resolves captured library/favorite/collection marks
+through lazy read-only catalog and saved-reference connections. It preserves
+query/scope identity across UI changes and validates the complete group before
+encoding. Its cancellation token spans resolution, file inspection, encoding,
+and native dispatch; released or cancelled gestures never restart from late
+ready results. The UI consumes each internal drag payload once at handoff.
+
 ## Build configuration
 
 `rust-toolchain.toml` pins Rust 1.98.1; the package uses edition 2024 and tracks

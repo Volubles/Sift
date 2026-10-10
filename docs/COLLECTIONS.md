@@ -30,8 +30,9 @@ failures remain visible and can be retried. The first collection opens initially
 saved names and membership survive restart independently of the active view.
 
 Internal drags carry captured marks and their source query/scope inside Sift.
-Outgoing dragging accepts one sound; a group crossing the client boundary shows
-an actionable message without copying a subset. Returning after native handoff
+Outgoing dragging offers up to 128 marked original files together. Selection
+lookup and file preparation run off the UI thread, and cancellation before
+handoff offers no subset. Returning after native handoff
 cancels that gesture rather than adding another internal item.
 
 ## Durable data
@@ -64,7 +65,7 @@ sources. Missing references remain saved.
 
 Revision checks use size and available modification timestamps, not content
 hashes. Automatic relinking, transcoding, virtual collection folders, item
-reordering, outgoing group copying, and portable import/export are not implemented.
+reordering, and portable import/export are not implemented.
 
 ## Qualification
 

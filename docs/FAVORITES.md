@@ -12,7 +12,9 @@ the activity rail opens a dedicated table with its own search. Selection uses
 
 Favorites share waveform, playback, source validation, and copy-only dragging
 with other views. Mark favorites, then switch to Collections to add the group
-through **Add selected sounds**. Outgoing dragging still copies one sound.
+through **Add selected sounds**. Outgoing dragging offers marked groups of up to
+128 originals; the preparation worker resolves the captured favorite query and
+marks without altering favorite or collection membership.
 Watched source changes refresh affected pages; **Refresh favorites**
 checks unwatched or offline references.
 

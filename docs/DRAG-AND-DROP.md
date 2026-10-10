@@ -12,8 +12,9 @@ An accepted drop means **the target accepted the copy offer**. Destination
 publication and any copying failures belong to that target. Application-managed export with explicit conflict planning and per-file
 outcomes remains a separate feature.
 
-The desktop starts dragging from a library row or the selected sound's
-**Drag copy to folder** control. Hold the left mouse button, move into an Explorer
+The desktop drags marked groups from Libraries, Favorites, or collection rows.
+An unmarked row becomes the one-sound selection. The selected sound's
+**Drag copy to folder** control still offers that sound alone. Hold the left mouse button, move into an Explorer
 folder, and release. Escape cancels. Clicks continue to select sounds; secondary
 button dragging does not start this operation. Preparation and active dragging
 have visible states. Acceptance, Escape, and unsuitable destinations end quietly
@@ -24,17 +25,20 @@ the drag ID and pointer state because OLE consumes the final release in its
 modal loop. The reset lets the row accept another click or drag after native completion.
 
 The adapter is available through the `native-drag` feature, which desktop enables
-by default. It supports multiple references internally; the current desktop
-offers one sound for outgoing copying. Other platforms do not claim outgoing
+by default. Groups of 1 to 128 sounds are offered together, including marked
+sounds outside loaded result pages. Other platforms do not claim outgoing
 native drag support yet.
 
 Collections add an internal egui drag phase: a held drag within Sift can add a
 marked group of up to 128 references to a collection name or its contents heading.
 The payload captures its source view, query/scope, and native marks; storage
 resolves the full group in the background before saving. Single-reference drags
-from the details control still work. A multi-sound group crossing the client
-boundary shows an actionable message instead of copying only its active row.
-Native copying starts when a single-sound drag leaves the client area.
+from the details control still work. Crossing the client boundary consumes the
+captured payload once and submits the whole selection to the preparation worker.
+The query, scope, and native marks are immutable for that gesture; changing the
+view cannot redirect it. Native copying starts only after the complete selection
+has been resolved, validated, and encoded. Missing explicit members, oversized
+groups, malformed storage, and invalid source files fail without offering a prefix.
 The copy-only/self-drop safeguards then apply;
 returning inside after native handoff ends quietly. See [Collections](COLLECTIONS.md).
 
@@ -42,11 +46,18 @@ returning inside after native handoff ends quietly. See [Collections](COLLECTION
 
 - One dedicated preparation worker; one request and one preparation result slot.
   A second request is refused until the first final outcome is consumed. Idle
-  workers block. Only file validation and UTF-16 payload preparation run there.
+  workers block. Selection resolution, file validation, and UTF-16 payload
+  preparation run there. Catalog and saved-reference reads use at most one lazy
+  read-only connection each, owned by this same worker; no database is created
+  or migrated during drag preparation.
 - At most 128 paths, 32,767 UTF-16 units per path, and 1 MiB of file-reference
   payload. Only path references are transferred; audio is not loaded into RAM.
 - Source existence, regular-file type, and reparse/link checks happen on the
   worker. Validation is a snapshot: a third-party target opens the path later.
+- Cancellation covers queued selection lookup, preparation, and native handoff.
+  Escape works with modifiers held, and a release observed before a ready result
+  is consumed cancels it. Late results cannot restart that gesture; a new drag is
+  accepted after the cancelled result has been drained.
 - A private message-only HWND belongs to the Sift window's input thread. Posting
   its start message defers the modal OLE call until the current egui/winit
   callback has returned. Native objects stay on that thread; Rust `Rc` prevents

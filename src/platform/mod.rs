@@ -8,6 +8,10 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
+mod selection;
+use crate::collections::ReferenceSelection;
+use selection::SelectionReader;
+
 #[cfg(windows)]
 mod windows_drag;
 
@@ -39,6 +43,8 @@ pub enum DragError {
     Unsupported,
     #[error("Windows file transfer failed: {0}")]
     Native(String),
+    #[error("Selected sounds could not be resolved: {0}")]
+    Selection(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +58,13 @@ pub enum DragOutcome {
 struct Sources(Vec<PathBuf>);
 
 struct Request {
-    sources: Sources,
+    input: DragInput,
     cancelled: Arc<AtomicBool>,
+}
+
+enum DragInput {
+    Files(Sources),
+    Selection(ReferenceSelection),
 }
 
 enum Prepared {
@@ -118,21 +129,26 @@ impl DragWorker {
     }
 
     pub fn start(wake: impl Fn() + Send + Sync + 'static) -> std::io::Result<Self> {
-        Self::start_with(wake, |sources, _cancelled| {
-            #[cfg(windows)]
-            {
-                windows_drag::drop_bytes(sources)
-            }
-            #[cfg(not(windows))]
-            {
-                let _unused = sources;
-                Err(DragError::Unsupported)
-            }
-        })
+        Self::start_with(wake, prepare_payload)
+    }
+
+    pub fn start_for_catalog(
+        path: PathBuf,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_with_reader(wake, Some(SelectionReader::new(path)), prepare_payload)
     }
 
     fn start_with(
         wake: impl Fn() + Send + Sync + 'static,
+        prepare: impl Fn(&Sources, Arc<AtomicBool>) -> Result<Vec<u8>, DragError> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_with_reader(wake, None, prepare)
+    }
+
+    fn start_with_reader(
+        wake: impl Fn() + Send + Sync + 'static,
+        mut reader: Option<SelectionReader>,
         prepare: impl Fn(&Sources, Arc<AtomicBool>) -> Result<Vec<u8>, DragError> + Send + 'static,
     ) -> std::io::Result<Self> {
         let (requests, jobs) = mpsc::sync_channel::<Request>(1);
@@ -144,14 +160,8 @@ impl DragWorker {
         let thread = thread::Builder::new()
             .name("sift-drag-prepare".into())
             .spawn(move || {
-                while let Ok(Request { sources, cancelled }) = jobs.recv() {
-                    let result = sources.validate(&cancelled).and_then(|valid| {
-                        if valid {
-                            prepare(&sources, cancelled).map(Prepared::Files)
-                        } else {
-                            Ok(Prepared::Cancelled)
-                        }
-                    });
+                while let Ok(Request { input, cancelled }) = jobs.recv() {
+                    let result = prepare_input(input, &mut reader, &cancelled, &prepare);
                     if sender.send(result).is_err() {
                         break;
                     }
@@ -187,17 +197,24 @@ impl DragWorker {
     }
 
     pub fn request(&mut self, paths: Vec<PathBuf>) -> Result<(), DragError> {
+        self.enqueue(DragInput::Files(Sources::new(paths)?))
+    }
+
+    pub fn request_selection(&mut self, selection: ReferenceSelection) -> Result<(), DragError> {
+        self.enqueue(DragInput::Selection(selection))
+    }
+
+    fn enqueue(&mut self, input: DragInput) -> Result<(), DragError> {
         if self.busy() {
             return Err(DragError::Busy);
         }
-        let sources = Sources::new(paths)?;
         let cancelled = Arc::new(AtomicBool::new(false));
         match self
             .requests
             .as_ref()
             .ok_or(DragError::Disconnected)?
             .try_send(Request {
-                sources,
+                input,
                 cancelled: cancelled.clone(),
             }) {
             Ok(()) => {
@@ -275,6 +292,47 @@ impl DragWorker {
                 Some(Err(error))
             }
         }
+    }
+}
+
+fn prepare_input(
+    input: DragInput,
+    reader: &mut Option<SelectionReader>,
+    cancelled: &Arc<AtomicBool>,
+    prepare: impl FnOnce(&Sources, Arc<AtomicBool>) -> Result<Vec<u8>, DragError>,
+) -> Result<Prepared, DragError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Ok(Prepared::Cancelled);
+    }
+    let sources = match input {
+        DragInput::Files(sources) => sources,
+        DragInput::Selection(selection) => {
+            let reader = reader.as_mut().ok_or_else(|| {
+                DragError::Selection("Catalog access is unavailable for this drag".into())
+            })?;
+            Sources::new(reader.sources(&selection)?)?
+        }
+    };
+    if !sources.validate(cancelled)? {
+        return Ok(Prepared::Cancelled);
+    }
+    let payload = prepare(&sources, cancelled.clone())?;
+    if cancelled.load(Ordering::Acquire) {
+        Ok(Prepared::Cancelled)
+    } else {
+        Ok(Prepared::Files(payload))
+    }
+}
+
+fn prepare_payload(sources: &Sources, _cancelled: Arc<AtomicBool>) -> Result<Vec<u8>, DragError> {
+    #[cfg(windows)]
+    {
+        windows_drag::drop_bytes(sources)
+    }
+    #[cfg(not(windows))]
+    {
+        let _unused = sources;
+        Err(DragError::Unsupported)
     }
 }
 

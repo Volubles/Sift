@@ -94,7 +94,8 @@ a failed save remains visible for retry.
 
 ### Copy into your workflow
 
-Drag a sound row out to an Explorer folder. Sift offers copying; Explorer handles
+Drag a marked group of up to 128 sounds out to an Explorer folder. Sift offers
+the complete selection as copies; Explorer handles
 destination conflicts and progress. Escape or an unsuitable drop location cancels
 the gesture. Original bytes and collection references stay in place.
 
@@ -119,9 +120,8 @@ the gesture. Original bytes and collection references stay in place.
 The index recognizes **WAV, FLAC, MP3, and AIFF**. Container metadata support does
 not guarantee playback of every codec variant or compatibility with every device.
 
-Collection adds/removals support groups of up to 128 sounds. Outgoing dragging
-currently copies one sound.
-Outgoing group copying, collection folders and item ordering, tags,
+Collection adds/removals and outgoing dragging support groups of up to 128 sounds.
+Collection folders and item ordering, tags,
 application-managed export, and explicit relinking of moved
 saved sources are later work. Similarity search is optional future work.
 

@@ -124,6 +124,22 @@ pub struct Store {
 }
 
 impl Store {
+    pub fn open_reader(path: &Path) -> Result<Self> {
+        let connection =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::from_secs(2))?;
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let application: i64 =
+            connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+        if version != 2 {
+            return Err(Error::UnsupportedSchema(version));
+        }
+        if application != APPLICATION_ID {
+            return Err(Error::WrongDatabase);
+        }
+        Ok(Self { connection })
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
