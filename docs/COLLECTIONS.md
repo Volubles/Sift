@@ -8,9 +8,12 @@ uses **Collections**, while **Library** means indexed source sounds.
 
 `collections::Store` owns a separate SQLite database derived from the catalog
 path: `catalog.sqlite` maps to `catalog.collections.sqlite`. Custom catalog paths
-produce equally isolated collection stores. Schema 1 has a dedicated application
+produce equally isolated collection stores. Schema 2 has a dedicated application
 ID, STRICT tables, foreign keys, WAL, and FULL synchronization. An unknown schema
 or a non-collection database is rejected without resetting user data.
+
+Schema 2 also stores [global favorites](FAVORITES.md) using the same worker;
+schema 1 upgrades transactionally. Favorites do not depend on collection membership.
 
 Collection and entry IDs are independent typed, non-reused SQLite identities
 within this durable database. They do not reference rebuildable catalog row IDs.

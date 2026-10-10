@@ -29,6 +29,8 @@ desktop drag gestures are implemented as described in
 [native transfer architecture](DRAG-AND-DROP.md). Saved collection references,
 transactional edits, source availability, and the desktop collection panel are
 implemented as described in [Collections](COLLECTIONS.md).
+The same durable database/worker now owns [Favorites](FAVORITES.md), with indexed
+search and bounded membership reads. No additional owner thread is required.
 
 File validation/encoding runs on a bounded preparation worker. The modal OLE
 gesture is posted to a private HWND on the window's input thread after the

@@ -1,5 +1,6 @@
 //! Durable, source-preserving saved selections, independent of the audio index.
 
+pub mod favorites;
 pub mod worker;
 
 use std::path::{Path, PathBuf};
@@ -84,7 +85,7 @@ pub enum Error {
     Database(#[from] rusqlite::Error),
     #[error("Source could not be read: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Unsupported collection schema {0}; this application supports schema 1")]
+    #[error("Unsupported collection schema {0}; this application supports schema 2")]
     UnsupportedSchema(i64),
     #[error("This file is not a Sift collection database")]
     WrongDatabase,
@@ -100,6 +101,8 @@ pub enum Error {
     SourceChanged,
     #[error("Choose between 1 and {PAGE_SIZE} sounds")]
     InvalidBatch,
+    #[error("Favorite status requests exceed their bounded path or byte limit")]
+    InvalidStatusBatch,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -123,7 +126,7 @@ impl Store {
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         let application: i64 =
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(Error::UnsupportedSchema(version));
         }
         if version == 0 && application == 0 {
@@ -133,9 +136,14 @@ impl Store {
             }
             let transaction = connection.transaction()?;
             transaction.execute_batch(include_str!("schema.sql"))?;
+            transaction.execute_batch(include_str!("migration-2.sql"))?;
             transaction.commit()?;
-        } else if version != 1 || application != APPLICATION_ID {
+        } else if !(1..=2).contains(&version) || application != APPLICATION_ID {
             return Err(Error::WrongDatabase);
+        } else if version == 1 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(include_str!("migration-2.sql"))?;
+            transaction.commit()?;
         }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
@@ -275,34 +283,7 @@ impl Store {
             let mut rows = statement.query(params![collection.0, PAGE_SIZE as i64, sql_offset])?;
             let mut raw = Vec::new();
             while let Some(row) = rows.next()? {
-                let path = row
-                    .get_ref(1)?
-                    .as_blob()
-                    .map_err(|_| Error::InvalidReference)?;
-                if path.len() > 65536 {
-                    return Err(Error::InvalidReference);
-                }
-                let reference = Reference {
-                    source: path_codec::decode(path.to_vec())
-                        .map_err(|_| Error::InvalidReference)?,
-                    name: stored_text(row, 2, 512)?,
-                    display_path: stored_text(row, 3, 32768)?,
-                    format: stored_text(row, 4, 16)?,
-                    size_bytes: u64::try_from(row.get::<_, i64>(5)?)
-                        .map_err(|_| Error::InvalidReference)?,
-                    audio: AudioMetadata {
-                        duration_seconds: row.get(7)?,
-                        sample_rate: row.get(8)?,
-                        channels: row.get(9)?,
-                        bit_depth: row.get(10)?,
-                    },
-                    metadata_error: if row.get_ref(11)?.data_type() == rusqlite::types::Type::Null {
-                        None
-                    } else {
-                        Some(stored_text(row, 11, 4096)?)
-                    },
-                };
-                validate_reference(&reference)?;
+                let reference = read_reference(row)?;
                 raw.push((
                     EntryId(row.get(0)?),
                     reference,
@@ -315,19 +296,7 @@ impl Store {
         let rows = raw
             .into_iter()
             .map(|(id, reference, modified)| {
-                let availability = match revision(&reference.source) {
-                    Ok((size, current))
-                        if size != reference.size_bytes
-                            || (modified.is_some() && current.is_some() && modified != current) =>
-                    {
-                        Availability::Changed
-                    }
-                    Ok(_) => Availability::Ready,
-                    Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                        Availability::Missing
-                    }
-                    Err(error) => Availability::Unavailable(error.to_string()),
-                };
+                let availability = availability(&reference, modified);
                 Entry {
                     id,
                     reference,
@@ -425,4 +394,50 @@ fn timestamp(time: SystemTime) -> Option<i64> {
         Err(error) => -i128::try_from(error.duration().as_nanos()).ok()?,
     };
     i64::try_from(signed).ok()
+}
+
+fn read_reference(row: &rusqlite::Row<'_>) -> Result<Reference> {
+    let path = row
+        .get_ref(1)?
+        .as_blob()
+        .map_err(|_| Error::InvalidReference)?;
+    if path.len() > 65536 {
+        return Err(Error::InvalidReference);
+    }
+    let reference = Reference {
+        source: path_codec::decode(path.to_vec()).map_err(|_| Error::InvalidReference)?,
+        name: stored_text(row, 2, 512)?,
+        display_path: stored_text(row, 3, 32768)?,
+        format: stored_text(row, 4, 16)?,
+        size_bytes: u64::try_from(row.get::<_, i64>(5)?).map_err(|_| Error::InvalidReference)?,
+        audio: AudioMetadata {
+            duration_seconds: row.get(7)?,
+            sample_rate: row.get(8)?,
+            channels: row.get(9)?,
+            bit_depth: row.get(10)?,
+        },
+        metadata_error: if row.get_ref(11)?.data_type() == rusqlite::types::Type::Null {
+            None
+        } else {
+            Some(stored_text(row, 11, 4096)?)
+        },
+    };
+    validate_reference(&reference)?;
+    Ok(reference)
+}
+
+fn availability(reference: &Reference, modified: Option<i64>) -> Availability {
+    match revision(&reference.source) {
+        Ok((size, current))
+            if size != reference.size_bytes
+                || (modified.is_some() && current.is_some() && modified != current) =>
+        {
+            Availability::Changed
+        }
+        Ok(_) => Availability::Ready,
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Availability::Missing
+        }
+        Err(error) => Availability::Unavailable(error.to_string()),
+    }
 }

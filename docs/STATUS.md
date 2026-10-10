@@ -46,6 +46,13 @@ No remote, publishing, or distribution license has been selected.
 
 ## Verification
 
+Favorites storage is implemented in durable collection schema 2 with independent
+IDs/native references, transactional upgrade, indexed search, bounded membership
+reads, and shutdown-safe edits. Generated fixtures cover preservation across
+restart/index rebuild, collection deletion, missing sources, search/paging,
+migration failure, and unchanged originals. All 58 headless tests and headless
+Clippy pass. Desktop integration is the next checkpoint. See [Favorites](FAVORITES.md).
+
 The repository foundation was checked for UTF-8/line endings, local links,
 ignore behavior, and text/binary attributes. Review staged diffs at each
 checkpoint. Git history is the source of current hashes and branch.

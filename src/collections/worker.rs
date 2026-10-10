@@ -6,10 +6,15 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
+use super::favorites::Favorite;
+use crate::search::SearchQuery;
+
 use super::{Collection, CollectionId, Entry, EntryId, Page, Reference, Store};
 
 #[derive(Clone, Debug)]
 pub enum Mutation {
+    Favorite(Reference),
+    Unfavorite(PathBuf),
     Create(String),
     Rename {
         collection: CollectionId,
@@ -28,6 +33,7 @@ pub enum Mutation {
 
 #[derive(Debug)]
 pub enum Change {
+    FavoriteChanged(PathBuf),
     Created(CollectionId),
     Updated(CollectionId),
     Deleted(CollectionId),
@@ -37,6 +43,14 @@ pub enum Change {
 pub enum Event {
     Ready,
     StartupFailed(String),
+    Favorites {
+        generation: u64,
+        result: Result<Page<Favorite>, String>,
+    },
+    FavoriteStatus {
+        generation: u64,
+        result: Result<Vec<(PathBuf, bool)>, String>,
+    },
     Groups {
         generation: u64,
         result: Result<Page<Collection>, String>,
@@ -53,6 +67,15 @@ pub enum Event {
 }
 
 enum Command {
+    Favorites {
+        generation: u64,
+        query: SearchQuery,
+        offset: usize,
+    },
+    FavoriteStatus {
+        generation: u64,
+        paths: Vec<PathBuf>,
+    },
     Groups {
         generation: u64,
         offset: usize,
@@ -71,6 +94,8 @@ enum Command {
 pub struct Worker {
     commands: Option<SyncSender<Command>>,
     events: Option<Receiver<Event>>,
+    favorites_generation: Arc<AtomicU64>,
+    status_generation: Arc<AtomicU64>,
     groups_generation: Arc<AtomicU64>,
     entries_generation: Arc<AtomicU64>,
     thread: Option<JoinHandle<()>>,
@@ -80,6 +105,10 @@ impl Worker {
     pub fn start(path: PathBuf, wake: impl Fn() + Send + 'static) -> std::io::Result<Self> {
         let (commands, jobs) = mpsc::sync_channel(4);
         let (sender, events) = mpsc::sync_channel(4);
+        let favorites_generation = Arc::new(AtomicU64::new(0));
+        let status_generation = Arc::new(AtomicU64::new(0));
+        let favorites = favorites_generation.clone();
+        let status = status_generation.clone();
         let groups_generation = Arc::new(AtomicU64::new(0));
         let entries_generation = Arc::new(AtomicU64::new(0));
         let groups = groups_generation.clone();
@@ -102,6 +131,32 @@ impl Worker {
                 }
                 while let Ok(command) = jobs.recv() {
                     let event = match command {
+                        Command::Favorites {
+                            generation,
+                            query,
+                            offset,
+                        } => {
+                            if !listening || generation < favorites.load(Ordering::Acquire) {
+                                continue;
+                            }
+                            Event::Favorites {
+                                generation,
+                                result: store
+                                    .favorites(&query, offset)
+                                    .map_err(|error| error.to_string()),
+                            }
+                        }
+                        Command::FavoriteStatus { generation, paths } => {
+                            if !listening || generation < status.load(Ordering::Acquire) {
+                                continue;
+                            }
+                            Event::FavoriteStatus {
+                                generation,
+                                result: store
+                                    .favorite_status(&paths)
+                                    .map_err(|error| error.to_string()),
+                            }
+                        }
                         Command::Groups { generation, offset } => {
                             if !listening || generation < groups.load(Ordering::Acquire) {
                                 continue;
@@ -134,6 +189,12 @@ impl Worker {
                             // Accepted edits are drained even after the UI disconnects.
                             // Successful completion is emitted only after SQL commit.
                             let result = match mutation {
+                                Mutation::Favorite(reference) => store
+                                    .favorite(&reference)
+                                    .map(|()| Change::FavoriteChanged(reference.source)),
+                                Mutation::Unfavorite(source) => store
+                                    .unfavorite(&source)
+                                    .map(|()| Change::FavoriteChanged(source)),
                                 Mutation::Create(name) => store.create(&name).map(Change::Created),
                                 Mutation::Rename { collection, name } => store
                                     .rename(collection, &name)
@@ -164,6 +225,8 @@ impl Worker {
         Ok(Self {
             commands: Some(commands),
             events: Some(events),
+            favorites_generation,
+            status_generation,
             groups_generation,
             entries_generation,
             thread: Some(thread),
@@ -172,6 +235,22 @@ impl Worker {
 
     pub fn poll(&self) -> Option<Event> {
         self.events.as_ref()?.try_recv().ok()
+    }
+
+    pub fn favorites(&self, generation: u64, query: SearchQuery, offset: usize) -> bool {
+        self.favorites_generation
+            .fetch_max(generation, Ordering::AcqRel);
+        self.send_query(Command::Favorites {
+            generation,
+            query,
+            offset,
+        })
+    }
+
+    pub fn favorite_status(&self, generation: u64, paths: Vec<PathBuf>) -> bool {
+        self.status_generation
+            .fetch_max(generation, Ordering::AcqRel);
+        self.send_query(Command::FavoriteStatus { generation, paths })
     }
 
     pub fn groups(&self, generation: u64, offset: usize) -> bool {
@@ -200,17 +279,17 @@ impl Worker {
         match self
             .commands
             .as_ref()
-            .ok_or("Collection storage is unavailable")?
+            .ok_or("Saved sound storage is unavailable")?
             .try_send(Command::Mutate {
                 operation,
                 mutation,
             }) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
-                Err("Collection storage is busy; retry the pending change".into())
+                Err("Saved sound storage is busy; retry the pending change".into())
             }
             Err(TrySendError::Disconnected(_)) => {
-                Err("Collection storage has stopped; reopen Sift to retry".into())
+                Err("Saved sound storage has stopped; reopen Sift to retry".into())
             }
         }
     }
@@ -223,7 +302,7 @@ impl Drop for Worker {
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
         {
-            eprintln!("Collection storage worker panicked during shutdown");
+            eprintln!("Saved sound storage worker panicked during shutdown");
         }
     }
 }
@@ -232,6 +311,59 @@ impl Drop for Worker {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn shutdown_drains_favorite_saves_and_removals_without_reading_results() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("saved.sqlite");
+        let source = directory.path().join("sound.wav");
+        std::fs::write(&source, b"fixture").unwrap();
+        let reference = Reference {
+            source: source.clone(),
+            name: "sound.wav".into(),
+            display_path: "sound.wav".into(),
+            format: "wav".into(),
+            size_bytes: 7,
+            audio: Default::default(),
+            metadata_error: None,
+        };
+        let worker = Worker::start(path.clone(), || {}).unwrap();
+        assert!(matches!(
+            worker
+                .events
+                .as_ref()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap(),
+            Event::Ready
+        ));
+        worker
+            .mutate(1, Mutation::Favorite(reference.clone()))
+            .unwrap();
+        drop(worker);
+        assert_eq!(
+            Store::open(&path)
+                .unwrap()
+                .favorites(&SearchQuery::All, 0)
+                .unwrap()
+                .total,
+            1
+        );
+        let worker = Worker::start(path.clone(), || {}).unwrap();
+        worker
+            .mutate(2, Mutation::Unfavorite(source.clone()))
+            .unwrap();
+        drop(worker);
+        assert_eq!(
+            Store::open(&path)
+                .unwrap()
+                .favorites(&SearchQuery::All, 0)
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(std::fs::read(source).unwrap(), b"fixture");
+    }
 
     #[test]
     fn shutdown_preserves_an_accepted_edit_with_unread_completion() {
