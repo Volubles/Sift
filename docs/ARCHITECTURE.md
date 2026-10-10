@@ -50,10 +50,10 @@ Durable-source relinking and content/alias identity remain later work.
 Unknown metadata is nullable, and failed probes are
 stored explicitly. Parser reads are limited to 8 MiB per file.
 
-The [stack review](STACK-REVIEW.md) records the 2026-10-09 comparison, including
-Slint/Iced/GPUI, storage alternatives, audio streaming options, and remaining
-prototype checks. Keep egui as the first candidate and Slint as the main UI
-alternative; the [renderer baseline](BASELINE.md) now provides local comparison evidence.
+The initial framework review considered Slint, Iced, GPUI, storage alternatives,
+and audio streaming options. egui/eframe is the implemented UI; Slint remains an
+alternative if further measurements justify a change. The
+[renderer baseline](BASELINE.md) records the local Glow/WGPU comparison.
 
 ## Candidates and decision boundaries
 

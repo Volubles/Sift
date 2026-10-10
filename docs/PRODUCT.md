@@ -23,7 +23,7 @@ of a feature's quality.
 - Small, coherent checkpoint commits are the standard workflow.
 - Documentation, product UI, and all user-visible content are in English.
 
-Windows is the proposed first platform, based on Benjamin's working environment.
+Windows is the first desktop platform.
 A portable core should allow further platforms without promising support before
 verification. Publishing, licensing, and final visual design remain open.
 

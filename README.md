@@ -1,121 +1,89 @@
 # Sift
 
-Sift is a local sample browser for sound effects, samples, and music files.
-It provides fast search, responsive audio previews, and collections for
-collecting sounds and copying them into other folders. Low CPU and memory use
-are core requirements.
+A local sample browser for sound effects, samples, and music. Find a sound,
+preview it, save a reference in a collection, and drag a copy into your workflow.
 
-The prototype provides a native Windows metadata browser and a CLI. It indexes
-chosen folders into bundled SQLite/FTS5, searches bounded result pages, and
-shows named libraries and a folder browser, a compact audio table, waveforms,
-controlled audio preview, saved collections, global favorites,
-and outgoing copy-only file dragging on Windows. This is not a finished
-application.
+Sift is a Windows prototype written in Rust. It works offline and prioritizes
+responsive browsing, bounded memory, and preserving original audio files.
 
-Development uses small, coherent Conventional Commits at natural checkpoints.
-Private audio libraries, databases, exports, raw measurements, and IDE settings
-do not belong in the repository.
+## Features
 
-All project documentation and user-visible content are written in English.
+- Named libraries with multiple source folders and a hierarchical folder browser.
+- Filename and path search with paged results.
+- Waveform preview, playback, seeking, volume, and auto-play.
+- Collections and global favorites that survive rebuilding the search index.
+- Incremental indexing and automatic detection of Windows folder changes.
+- Copy-only file dragging to Explorer.
 
-## Start here
-
-- [AGENTS.md](AGENTS.md): working agreement, code quality, and verification.
-- [Current status](docs/STATUS.md): what exists and the next step.
-- [Product requirements](docs/PRODUCT.md): features, invariants, and acceptance.
-- [Architecture](docs/ARCHITECTURE.md): technical direction and responsibilities.
-- [Stack review](docs/STACK-REVIEW.md): alternatives, evidence, and prototype gates.
-- [Performance](docs/PERFORMANCE.md): provisional budgets and measurement method.
-- [Git conventions](GIT-COMMIT-CONVENTIONS.md): small, natural checkpoints.
-
-## Run the prototype
+## Getting started
 
 Install Rust with rustup and the Visual Studio C++ build tools on Windows.
-The repository pins Rust 1.98.1 and tracks Cargo.lock.
+The repository pins the Rust toolchain and tracks Cargo.lock.
 
 ```powershell
 cargo run --locked
-cargo run --locked -- index "C:\path\to\your\samples"
-cargo run --locked -- search "door wood"
-cargo run --locked -- search "door" --offset 128
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
-cargo fmt --all -- --check
 ```
 
-The desktop opens by default. Choose the drive icon for **Libraries**, use **New**
-to create a bank, and **Add source folder...** to register existing directories.
-Choose a bank for all its sounds, or a folder for that branch and its descendants.
-**All sounds** restores the bank scope. **Ctrl+F** focuses search in the current
-scope. Right-click a bank to rename/remove it or a source to rescan/remove its
-registration. Source audio stays in place.
+Create a library with **New**, then use **Folders +** to add a source folder.
+Click a folder name to browse its sounds; the chevron opens its subfolders.
+**All sounds** restores the library scope, and **Ctrl+F** focuses search.
 
-The folder tree separates opening a branch (chevron) from choosing its sounds
-(name). Source folders have drive icons and cached counts/status; subfolders
-have folder icons and hierarchy guides. Click the breadcrumb path above search
-to return to a parent. In the focused tree, Up/Down move focus, Left/Right
-close/open branches, Enter chooses the sound scope, and Home/End move to the
-first/last loaded folder. Keyboard focus and the selected sound scope are distinct.
+Click a sound to inspect its waveform. Play/Pause, Space, Stop, volume, waveform
+clicking, and **Auto-play** control the preview. Star a sound to save it in
+**Favorites**. **Collections +** creates a saved selection; **Add selected sound**
+or an internal drag adds a reference. Changes save automatically.
 
-**Live updates** watches registered Windows folders automatically. Add, change,
-rename, move, or remove sounds and the index follows after a brief settling
-period. Pause with the checkbox; resuming checks for changes made while paused.
-Unavailable roots retain cached data. Cancelling an update pauses watching.
+To copy a sound, drag its row out to an Explorer folder. Escape cancels. Explorer
+handles destination conflicts and copying progress. Original files stay in place.
 
-Click a sound to inspect its metadata and waveform. Play/Pause,
-Space, Stop, volume, waveform clicking, and **Auto-play** control the preview.
-Choose the grid icon for **Collections**, preserving the current bank/folder/query.
-Use **Collections +** to create a saved selection; right-click its name to rename
-or delete it. **Add selected sound** or drag a library row onto a collection name
-to add a reference. Click a saved sound to preview it; right-click to remove its
-reference. Changes save automatically. **Details** toggles the metadata panel.
-Click a sound's star in Libraries or Collections to favorite it. The star icon
-in the left rail opens **Favorites** from all banks, with its own search and the
-same preview/copy workflow. Favorite changes save automatically; removing a star
-preserves collections and source audio. Missing favorites remain visible.
-Hold the left
-mouse button on a library row or **Drag copy to folder**, move into an Explorer
-folder, and release to offer a copy. Escape cancels the drag. Explorer handles
-file conflicts and copying progress. Completed/cancelled drags end quietly. Scanning can be
-cancelled, and search runs independently from indexing. Selection is currently
-single-item.
+**Live updates** watches registered folders. Pause with the checkbox; resuming
+checks for changes made while paused. **Details** opens the metadata panel.
 
-On Windows the catalog lives in `%LOCALAPPDATA%\Sift\catalog.sqlite`; it is
-independent of the executable and working directory. Library registrations live
-in `catalog.libraries.sqlite`; collections and favorites share
-`catalog.collections.sqlite`. Both preserve user work through index rebuilds. Override with
-`--database PATH` for isolated experiments. The CLI-only configuration is
-available through `cargo run --locked --no-default-features -- index FOLDER`.
+### Command line
 
-Indexing reads source files and commits metadata in batches of 64. It recognizes
-WAV, FLAC, MP3, and AIFF, skips links/reparse points, and keeps per-file errors
-visible. Queries return at most 128 records. Words of three or more characters
-match literal substrings in names/relative paths; a shorter single query uses
-an indexed filename prefix.
+```powershell
+cargo run --locked -- index "C:\path\to\samples"
+cargo run --locked -- search "door wood"
+cargo run --locked -- search "door" --offset 128
+```
 
-The view renders visible rows and caches at most four 128-record sound pages.
-Folder browsing uses 64-row pages with up to 32 open branches. Workers
-use bounded queues and wake the UI on results; there is no idle polling timer.
-The prototype uses egui/eframe 0.36.2, the Glow renderer, and RFD 0.17.2 for the
-Windows folder dialog. See [checkpoint verification](docs/CHECKPOINT.md).
+Use `--database PATH` for isolated experiments. The Windows default is
+`%LOCALAPPDATA%\Sift\catalog.sqlite`. Library registrations live in
+`catalog.libraries.sqlite`; collections and favorites share
+`catalog.collections.sqlite`. Durable user data is separate from rebuildable indexes.
 
-Scans skip unchanged metadata and reconcile missing index rows only after a
-complete inventory; cancellation and inaccessible sources preserve cached data.
-See [Indexing](docs/INDEXING.md). Collection folders/reordering, tags, multi-selection, and application-managed
-folder export are not implemented. Do not treat indexed metadata as verified
-decoder/playback support.
+## Current scope
 
-See [preview verification](docs/PREVIEW.md) for tested fixtures, device behavior,
-cache limits, and remaining checks. Source files remain unchanged.
+The index recognizes WAV, FLAC, MP3, and AIFF. Verified container metadata does
+not guarantee support for every codec or audio device. Source errors remain
+visible, and offline libraries retain cached records and saved references.
 
-See [native drag verification](docs/DRAG-AND-DROP.md) for transfer limits,
-actual Windows Shell copying evidence, and the remaining manual Explorer checks.
+Selection is currently single-item. Collection folders, item ordering, tags,
+application-managed export, and automatic relinking of moved saved sources are
+future work. Similarity search is optional later work.
 
-See [Collections](docs/COLLECTIONS.md) for durable storage, source availability,
-save-failure recovery, UI verification, and remaining checks.
+Performance measurements use generated fixtures with documented limits.
+Representative large libraries, external drives, NAS, and the broader device
+matrix still need qualification.
 
-See [Libraries](docs/LIBRARIES.md) for named banks, native folder scopes, schema
-migration, source registration limits, and verification.
+## Development
 
-See [Favorites](docs/FAVORITES.md) for global saved references, paging,
-membership synchronization, and verification limits.
+```powershell
+cargo fmt --all -- --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+```
+
+The CLI-only configuration is available with `--no-default-features`.
+Private libraries, databases, exports, build output, and local working notes are
+excluded from version control.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md): storage, threads, and native boundaries.
+- [Product requirements](docs/PRODUCT.md): behavior and data-preservation rules.
+- [Libraries](docs/LIBRARIES.md), [Collections](docs/COLLECTIONS.md), and
+  [Favorites](docs/FAVORITES.md): browser and saved-reference workflows.
+- [Indexing](docs/INDEXING.md): incremental scanning and live file updates.
+- [Preview](docs/PREVIEW.md) and [file dragging](docs/DRAG-AND-DROP.md): audio and transfer behavior.
+- [Performance](docs/PERFORMANCE.md) and [index measurements](docs/INDEXING-BASELINE.md): methods, results, and limits.
