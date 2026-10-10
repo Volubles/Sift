@@ -12,3 +12,8 @@ images. Each variant uses one solid color and a transparent background.
 PNG exports are 1200 × 1200 pixels and use the same geometry as their SVG
 masters. Edge smoothing uses alpha; the visible fill color stays uniform.
 Use the SVG where scalable artwork is supported, and preserve its aspect ratio.
+
+The README uses a horizontal arrangement of the same paths:
+[white](../readme/sift-header-white.svg) and [black](../readme/sift-header-dark.svg).
+Its [browse](../readme/browse.svg), [preview](../readme/preview.svg), and
+[collect](../readme/collect.svg) icons are simple, editable SVG strokes.

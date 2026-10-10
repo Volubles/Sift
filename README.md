@@ -1,79 +1,139 @@
-# Sift
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/sift-header-white.svg">
+    <img src="assets/readme/sift-header-dark.svg" alt="Sift" width="360" height="129">
+  </picture>
+</h1>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/sift-logo-white.svg">
-  <img src="assets/brand/sift-logo-dark.svg" alt="Sift logo" width="220">
-</picture>
+<p align="center">
+  A local sample browser for sound effects, samples, and music.<br>
+  Find, preview, and collect sounds while keeping source files in place.
+</p>
 
-A local sample browser for sound effects, samples, and music. Find a sound,
-preview it, save a reference in a collection, and drag a copy into your workflow.
+<p align="center">
+  <a href="#features">Features</a> &middot;
+  <a href="#getting-started">Getting started</a> &middot;
+  <a href="#workflow">Workflow</a> &middot;
+  <a href="#documentation">Documentation</a>
+</p>
 
-Sift is a Windows prototype written in Rust. It works offline and prioritizes
-responsive browsing, bounded memory, and preserving original audio files.
+---
 
-![Sift browsing a library folder with waveform preview and favorites.](assets/screenshots/library-browser.png)
+Sift is a **Windows prototype written in Rust**. It works offline, with local
+storage and a focus on responsive browsing, bounded memory, and original audio.
+
+![Sift's native library browser, showing folder navigation, waveform preview, and favorite sounds.](assets/screenshots/library-browser.png)
 
 ## Features
 
-- Named libraries with multiple source folders and a hierarchical folder browser.
-- Filename and path search with paged results.
-- Waveform preview, playback, seeking, volume, and auto-play.
-- Collections and global favorites that survive rebuilding the search index.
-- Incremental indexing and automatic detection of Windows folder changes.
-- Copy-only file dragging to Explorer.
+| <img src="assets/readme/browse.svg" width="28" height="28" alt=""> Browse | <img src="assets/readme/preview.svg" width="28" height="28" alt=""> Preview | <img src="assets/readme/collect.svg" width="28" height="28" alt=""> Collect |
+| --- | --- | --- |
+| Named libraries, multiple source folders, a folder tree, and filename/path search. | Waveforms, playback, seeking, volume, and auto-play for the selected sound. | Saved collections, global favorites, and copy-only dragging into Explorer. |
+
+Registered folders update automatically when files are added, changed, renamed,
+or removed. Incremental scans reuse unchanged metadata, and unavailable sources
+keep their cached records and saved references.
+
+Collections and favorites store **references**, without duplicating audio.
+Their durable data survives rebuilding the search index.
 
 ## Getting started
 
-Install Rust with rustup and the Visual Studio C++ build tools on Windows.
-The repository pins the Rust toolchain and tracks Cargo.lock.
+Install [Rust with rustup](https://rust-lang.org/tools/install/) and the
+[Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+with the **Desktop development with C++** workload on Windows.
+The repository pins the toolchain and tracks `Cargo.lock`.
+
+From the repository directory:
 
 ```powershell
-cargo run --locked
+cargo run --locked --release
 ```
 
-Create a library with **New**, then use **Folders +** to add a source folder.
-Click a folder name to browse its sounds; the chevron opens its subfolders.
-**All sounds** restores the library scope, and **Ctrl+F** focuses search.
+1. Select **Libraries**, then **New** to create a library.
+2. Use **Folders +** to register an existing audio folder.
+3. Select a folder or search for a sound, then click a result to preview it.
+4. Star the sound, save it in a collection, or drag a copy into an Explorer folder.
 
-Click a sound to inspect its waveform. Play/Pause, Space, Stop, volume, waveform
-clicking, and **Auto-play** control the preview. Star a sound to save it in
-**Favorites**. **Collections +** creates a saved selection; **Add selected sound**
-or an internal drag adds a reference. Changes save automatically.
+Audio stays in its source folder. Removing a library registration, collection
+item, or favorite removes its reference, not the original file.
 
-To copy a sound, drag its row out to an Explorer folder. Escape cancels. Explorer
-handles destination conflicts and copying progress. Original files stay in place.
+## Workflow
 
-**Live updates** watches registered folders. Pause with the checkbox; resuming
-checks for changes made while paused. **Details** opens the metadata panel.
+### Browse a library
 
-### Command line
+Select a library for all its sounds, or a folder for that branch and its
+descendants. The chevron opens subfolders; the folder name selects its sounds.
+Clickable breadcrumbs return to ancestors, and **All sounds** restores the
+library scope. **Ctrl+F** focuses search within the current scope.
 
-```powershell
-cargo run --locked -- index "C:\path\to\samples"
-cargo run --locked -- search "door wood"
-cargo run --locked -- search "door" --offset 128
-```
+### Preview a sound
 
-Use `--database PATH` for isolated experiments. The Windows default is
-`%LOCALAPPDATA%\Sift\catalog.sqlite`. Library registrations live in
-`catalog.libraries.sqlite`; collections and favorites share
-`catalog.collections.sqlite`. Durable user data is separate from rebuildable indexes.
+Click a sound to load its waveform. Use **Play/Pause**, **Stop**, volume, or
+**Auto-play**; click the waveform to play from that position. **Details** opens
+source metadata and availability. Space toggles playback when focus is outside
+text fields and the folder tree.
+
+### Keep a selection
+
+Star a sound to save it in **Favorites**, available across libraries and
+collections. In **Collections**, use **Collections +** to create a selection,
+then **Add selected sound** or an internal drag to add a reference. Changes save
+automatically. A failed save remains visible for retry.
+
+### Copy into your workflow
+
+Drag a sound row out to an Explorer folder. Sift offers copying; Explorer handles
+destination conflicts and progress. Escape or an unsuitable drop location cancels
+the gesture. Original bytes and collection references stay in place.
+
+### Keyboard shortcuts
+
+| Context | Key | Action |
+| --- | --- | --- |
+| Library browser | Ctrl+F | Focus search |
+| Folder tree | Up / Down | Move focus through loaded folders |
+| Folder tree | Left / Right | Collapse / expand or move to a parent / child |
+| Folder tree | Enter | Browse the focused folder's sounds |
+| Folder tree | Home / End | Focus the first / last loaded folder |
+| Preview | Space | Play / pause when other controls do not own the key |
+| File drag | Escape | Cancel |
 
 ## Current scope
 
-The index recognizes WAV, FLAC, MP3, and AIFF. Verified container metadata does
-not guarantee support for every codec or audio device. Source errors remain
-visible, and offline libraries retain cached records and saved references.
+The index recognizes **WAV, FLAC, MP3, and AIFF**. Container metadata support does
+not guarantee playback of every codec variant or compatibility with every device.
 
-Selection is currently single-item. Collection folders, item ordering, tags,
-application-managed export, and automatic relinking of moved saved sources are
-future work. Similarity search is optional later work.
+Selection is currently single-item. Collection folders and item ordering, tags,
+multi-selection, application-managed export, and explicit relinking of moved
+saved sources are later work. Similarity search is optional future work.
 
-Performance measurements use generated fixtures with documented limits.
-Representative large libraries, external drives, NAS, and the broader device
-matrix still need qualification.
+Large-library measurements use generated fixtures with documented limits.
+Initial import remains an optimization target; representative libraries, external
+drives, NAS, and the broader audio-device matrix still need qualification.
+See [performance measurements](docs/INDEXING-BASELINE.md) for the method and results.
+
+## Local data
+
+The Windows default is `%LOCALAPPDATA%\Sift\`. Data lives independently of the
+executable and working directory.
+
+| File | Purpose |
+| --- | --- |
+| `catalog.sqlite` | Rebuildable search index |
+| `catalog.libraries.sqlite` | Durable library and source-folder registrations |
+| `catalog.collections.sqlite` | Durable collections and favorites |
+| `catalog.waveforms.sqlite` | Rebuildable waveform cache |
+
+Use `--database PATH` to choose a separate catalog for experiments. Do not delete
+the durable databases to clear the index or cache.
 
 ## Development
+
+The application uses Rust, egui/eframe with Glow, bundled SQLite/FTS5, Symphonia,
+and CPAL. Presentation, storage, decoding, and native Windows integration have
+separate owners; background queues and caches are bounded. See
+[architecture](docs/ARCHITECTURE.md) for responsibilities and thread boundaries.
 
 ```powershell
 cargo fmt --all -- --check
@@ -81,16 +141,31 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-The CLI-only configuration is available with `--no-default-features`.
-Private libraries, databases, exports, build output, and local working notes are
-excluded from version control.
+Device and Shell integration checks are explicit opt-in tests; see the linked
+documentation for their fixtures and remaining manual checks. Private libraries,
+databases, exports, build output, and working notes stay outside version control.
+
+<details>
+<summary>Command-line indexing and search</summary>
+
+```powershell
+cargo run --locked --no-default-features -- index "C:\path\to\samples"
+cargo run --locked --no-default-features -- search "door wood"
+cargo run --locked --no-default-features -- search "door" --offset 128
+```
+
+The CLI configuration shares the same catalog and durable data as the desktop.
+Use `--database PATH` to isolate a test. Queries return at most 128 results per page.
+
+</details>
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md): storage, threads, and native boundaries.
-- [Product requirements](docs/PRODUCT.md): behavior and data-preservation rules.
-- [Libraries](docs/LIBRARIES.md), [Collections](docs/COLLECTIONS.md), and
-  [Favorites](docs/FAVORITES.md): browser and saved-reference workflows.
-- [Indexing](docs/INDEXING.md): incremental scanning and live file updates.
-- [Preview](docs/PREVIEW.md) and [file dragging](docs/DRAG-AND-DROP.md): audio and transfer behavior.
-- [Performance](docs/PERFORMANCE.md) and [index measurements](docs/INDEXING-BASELINE.md): methods, results, and limits.
+| Topic | Read |
+| --- | --- |
+| Browser and saved sounds | [Libraries](docs/LIBRARIES.md), [Collections](docs/COLLECTIONS.md), [Favorites](docs/FAVORITES.md) |
+| Audio and file transfer | [Preview](docs/PREVIEW.md), [Drag and drop](docs/DRAG-AND-DROP.md) |
+| Files and live updates | [Incremental indexing](docs/INDEXING.md) |
+| Design and behavior | [Architecture](docs/ARCHITECTURE.md), [Product requirements](docs/PRODUCT.md) |
+| Resource use and evidence | [Performance](docs/PERFORMANCE.md), [Renderer baseline](docs/BASELINE.md), [Index measurements](docs/INDEXING-BASELINE.md) |
+| Brand assets | [SVG masters and transparent PNG exports](assets/brand/README.md) |
