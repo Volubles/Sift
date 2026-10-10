@@ -1,10 +1,17 @@
 # Sift
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/sift-logo-white.svg">
+  <img src="assets/brand/sift-logo-dark.svg" alt="Sift logo" width="220">
+</picture>
+
 A local sample browser for sound effects, samples, and music. Find a sound,
 preview it, save a reference in a collection, and drag a copy into your workflow.
 
 Sift is a Windows prototype written in Rust. It works offline and prioritizes
 responsive browsing, bounded memory, and preserving original audio files.
+
+![Sift browsing a library folder with waveform preview and favorites.](assets/screenshots/library-browser.png)
 
 ## Features
 
