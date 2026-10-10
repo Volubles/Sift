@@ -27,7 +27,9 @@ starts with an empty search.
 Changing search text resets that view's marks and scroll. Completed marks survive
 navigation and refresh. Unfinished range selection and queued keyboard movement
 are cancelled when their view is left; late replies cannot update another view.
-Keyboard focus remains with the controls you use rather than jumping into a list.
+The initial loaded library list receives focus once when no other control has
+it, so keyboard audition works without a first click. After that, keyboard focus
+remains with the controls you use rather than jumping into a list.
 
 The Collections add button continues to use marks from the last used sound list.
 Choosing an add destination retains the previous source marks even when that

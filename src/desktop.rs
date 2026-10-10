@@ -134,6 +134,7 @@ struct Browser {
     libraries: Libraries,
     sidebar: Sidebar,
     marked_view: Sidebar,
+    startup_focus_pending: bool,
     drag_error: Option<String>,
     generation: u64,
     view_generation: u64,
@@ -177,6 +178,7 @@ impl Browser {
             collections,
             libraries: Libraries::default(),
             marked_view: Sidebar::Libraries,
+            startup_focus_pending: true,
             sidebar: if options.smoke_screenshot.is_some() {
                 match std::env::var("SIFT_SMOKE_VIEW").as_deref() {
                     Ok("favorites") => Sidebar::Favorites,
@@ -262,6 +264,7 @@ impl Browser {
         if self.sidebar == mode {
             return;
         }
+        self.startup_focus_pending = false;
         if self.sidebar == Sidebar::Collections {
             self.collections.suspend_view();
         }
@@ -800,6 +803,13 @@ impl Browser {
         }
         let mut needed = BTreeSet::new();
         let focus_id = ui.make_persistent_id("library-sound-focus");
+        if std::mem::take(&mut self.startup_focus_pending)
+            && self.sidebar == Sidebar::Libraries
+            && ui.memory(|memory| memory.focused().is_none())
+            && !egui::Popup::is_any_open(ui.ctx())
+        {
+            selection::focus(ui, focus_id);
+        }
         let favorite_key =
             self.library_view
                 .selection

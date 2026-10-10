@@ -5,6 +5,11 @@ The active row has a thin outline; activating a sound updates preview. Other mar
 their selection background. Keyboard commands apply to the focused sound list,
 leaving search fields, forms, folder-tree navigation, and menus available.
 
+On startup, the loaded library sound list receives keyboard focus once if no
+other control owns it. S or Down can navigate immediately without clicking a
+sound first. A search field or open menu keeps its focus; switching views also
+ends this initial focus request. Loading or empty results do not consume it.
+
 | Input | Action |
 | --- | --- |
 | Click | Mark and activate one sound |
