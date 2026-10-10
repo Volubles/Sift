@@ -9,6 +9,9 @@ original file into another application or folder. Source audio stays in place.
 Libraries group one or more source folders under a name. A library or folder
 selection scopes the sound table and search. Folder expansion and sound scope
 are separate actions; breadcrumbs provide a path back through ancestors.
+Recently visited libraries, folders, and collections remember their search,
+selection, and list position during the open session. Restoring a sound prepares
+it silently. See [Navigation](NAVIGATION.md) for bounds and scope.
 
 The selected sound has waveform, playback, seeking, volume, auto-play, and
 metadata controls. Global favorites provide quick access to saved references.

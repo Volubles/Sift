@@ -9,8 +9,10 @@ each exact native file locator once.
 
 The library sidebar lists banks above the folder tree. Selecting a bank shows
 all its indexed sounds; selecting a folder scopes the table and search to that
-folder and its descendants. **All sounds** restores the bank scope. Switching
-to Collections preserves the library, folder, and query.
+folder and its descendants. **All sounds** restores the bank scope. A bank opens
+its last folder and tree position, or all sounds on its first visit. Recently
+visited folders remember their own search, marks, and sound-list position.
+Switching to Collections preserves the library view. See [Navigation](NAVIGATION.md).
 
 **New** creates a library. **Folders +** opens the native source-folder chooser.
 Context menus provide rename/removal and source rescan/removal actions.
@@ -23,7 +25,8 @@ availability labels. Other directories have folder icons. Chevron clicks expand
 branches; row clicks select their sounds. Truncated names expose their native
 path on hover.
 
-Breadcrumbs select ancestors while preserving the bank and query. Deep paths
+Breadcrumbs select ancestors while preserving the bank. A new folder inherits
+the current query; a revisited folder restores its own query. Deep paths
 collapse middle labels into a menu. A source named like its bank does not repeat
 that label. Revealing ancestors uses loaded metadata without inspecting the
 filesystem on the UI thread.

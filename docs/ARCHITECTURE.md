@@ -11,6 +11,8 @@ All core workflows run locally without accounts or network services.
 | `desktop` | Window layout, navigation, catalog events, and selection between views |
 | `desktop::preview` | Selected-source state, source validation generations, waveform results, playback controls, and details |
 | `desktop::selection` | View-local source marks, range generations, keyboard focus, and pending navigation |
+| `desktop::library_view` | Current library/folder query, selection, and remembered sound-table views |
+| `desktop::navigation` | Bounded inactive view caches shared by the library, tree, and collection owners |
 | `desktop::libraries` | Library registrations, folder scopes, breadcrumbs, and tree navigation |
 | `desktop::collections` / `favorites` | Saved-reference views and pending edits |
 | `library` | Source enumeration, metadata probing, revisions, and synchronization |
@@ -88,6 +90,14 @@ used sound list; selecting a collection destination retains one bounded prior
 collection snapshot until the user makes new marks there. SQL and source checks
 remain off the UI thread, and failed group edits retain the captured command for
 retry or discard.
+
+Session view state stays with each view owner. Library/folder queries and marks
+move into `LibraryView`'s cache; library trees and collection contents have their
+own caches. Each retains at most 16 inactive views and 8 MiB of estimated state.
+Pages, audio data, workers, and pending edits are excluded. Generations remain
+monotonic across restoration; unfinished navigation/ranges are cancelled. The
+preview owner prepares restored references silently and verifies their native
+sources. See [Navigation](NAVIGATION.md) for user-visible behavior and limits.
 
 Workers wait for requests or native signals while idle and request a repaint
 when results arrive. The UI performs presentation and submits short commands;

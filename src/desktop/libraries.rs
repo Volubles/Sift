@@ -8,9 +8,38 @@ use crate::libraries::{Library, LibraryId};
 use crate::worker::{EditOutcome, LibraryEdit, Workers};
 
 mod tree;
+use super::navigation::{RetainedState, Views};
 use tree::TreeFocus;
 
 const MAX_OPEN_FOLDERS: usize = 32;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Location {
+    pub library: Option<LibraryId>,
+    pub folder: Option<PathBuf>,
+}
+
+#[derive(Default)]
+struct BankView {
+    folder: Option<PathBuf>,
+    expanded: BTreeSet<PathBuf>,
+    offsets: BTreeMap<PathBuf, usize>,
+    tree_offset: f32,
+}
+
+impl RetainedState for BankView {
+    fn retained_bytes(&self) -> usize {
+        self.folder
+            .as_ref()
+            .map_or(0, |path| path.as_os_str().len())
+            + self
+                .expanded
+                .iter()
+                .chain(self.offsets.keys())
+                .map(|path| path.as_os_str().len())
+                .sum::<usize>()
+    }
+}
 
 struct Breadcrumb {
     label: String,
@@ -19,6 +48,7 @@ struct Breadcrumb {
 
 #[derive(Default)]
 pub(super) struct Libraries {
+    bank_views: Views<Option<LibraryId>, BankView>,
     groups: Vec<Library>,
     ready: bool,
     initialized: bool,
@@ -63,6 +93,30 @@ pub(super) enum Action {
 }
 
 impl Libraries {
+    pub(super) fn location(&self) -> Location {
+        Location {
+            library: self.active,
+            folder: self.folder.clone(),
+        }
+    }
+
+    pub(super) fn valid_location(&self, location: &Location) -> bool {
+        let roots: Vec<_> = self
+            .groups
+            .iter()
+            .filter(|bank| location.library.is_none() || location.library == Some(bank.id))
+            .flat_map(|bank| bank.sources.iter().map(|source| &source.path))
+            .collect();
+        (location.library.is_none()
+            || self
+                .groups
+                .iter()
+                .any(|bank| location.library == Some(bank.id)))
+            && location
+                .folder
+                .as_ref()
+                .is_none_or(|folder| roots.iter().any(|root| folder.starts_with(root)))
+    }
     pub(super) fn scope(&self) -> Scope {
         if let Some(folder) = &self.folder {
             return Scope::Folders(vec![folder.clone()]);
@@ -258,6 +312,9 @@ impl Libraries {
         match result {
             Ok(groups) => {
                 self.groups = groups;
+                self.bank_views.retain(|id| {
+                    id.is_none() || self.groups.iter().any(|bank| Some(bank.id) == *id)
+                });
                 self.ready = true;
                 self.error = None;
                 if !self.initialized {
@@ -414,15 +471,40 @@ impl Libraries {
     }
 
     fn choose_bank(&mut self, id: Option<LibraryId>) {
+        if self.active == id {
+            return;
+        }
+        let remembered = self.bank_views.switch(
+            self.active,
+            BankView {
+                folder: self.folder.take(),
+                expanded: std::mem::take(&mut self.expanded),
+                offsets: std::mem::take(&mut self.offsets),
+                tree_offset: self.tree_offset,
+            },
+            &id,
+        );
+        let first_visit = remembered.is_none();
+        let restored = remembered.unwrap_or_default();
         self.active = id;
         self.tree_focus = None;
         self.focus_scroll = false;
-        self.tree_offset = 0.0;
-        self.folder = None;
-        self.expanded.clear();
-        self.offsets.clear();
+        self.tree_offset = restored.tree_offset;
+        self.expanded = restored.expanded;
+        self.offsets = restored.offsets;
+        self.folder = restored.folder;
+        if !self.valid_location(&self.location()) {
+            self.folder = None;
+        }
+        let roots = self.roots();
+        self.expanded
+            .retain(|path| roots.iter().any(|root| path.starts_with(root)));
+        self.offsets
+            .retain(|path, _| roots.iter().any(|root| path.starts_with(root)));
         self.invalidate();
-        self.open_first_source();
+        if first_visit {
+            self.open_first_source();
+        }
     }
 
     fn mutate(&mut self, workers: &Workers, edit: LibraryEdit) {

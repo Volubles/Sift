@@ -16,6 +16,10 @@ through **Add selected sounds**. Outgoing dragging still copies one sound.
 Watched source changes refresh affected pages; **Refresh favorites**
 checks unwatched or offline references.
 
+Returning to Favorites restores its search, marks, active sound, and scroll
+position during the open session. The restored sound is prepared silently;
+clicking or navigating still auditions it. See [Navigation](NAVIGATION.md).
+
 The focused list supports [multiple marks and W/S or Up/Down navigation](SELECTION.md).
 F removes the active sound's star. In other sound lists F toggles membership;
 unknown membership is resolved transactionally on the worker before publishing

@@ -53,6 +53,13 @@ impl Favorites {
         self.selection.count(self.total)
     }
 
+    pub(super) fn active_reference(&self) -> Option<(super::SoundKey, Reference)> {
+        Some((
+            self.selection.active()?,
+            self.selection.reference()?.clone(),
+        ))
+    }
+
     pub(super) fn selected_references(
         &self,
     ) -> Result<crate::collections::ReferenceSelection, String> {
@@ -68,6 +75,9 @@ impl Favorites {
         self.selection.has_focus(context)
     }
     pub(super) fn set_active(&mut self, active: bool) {
+        if self.active && !active {
+            self.selection.suspend();
+        }
         self.active = active;
     }
 
@@ -372,7 +382,8 @@ impl Favorites {
         let mut remove = None;
         self.selection.feedback(ui, self.total);
         table_heading(ui);
-        self.selection
+        let scroll = self
+            .selection
             .scroll_area(
                 ui,
                 egui::ScrollArea::vertical()
@@ -381,6 +392,7 @@ impl Favorites {
                 0,
             )
             .show_rows(ui, 28.0, self.total, |ui, range| {
+                let first_visible = range.start;
                 for index in range {
                     let offset = index / PAGE_SIZE * PAGE_SIZE;
                     needed.insert(offset);
@@ -450,7 +462,10 @@ impl Favorites {
                         );
                     }
                 }
+                first_visible
             });
+        self.selection
+            .remember_scroll(scroll.state.offset.y, scroll.inner);
         if let Some((sound, index, gesture)) = choice {
             self.selection.choose(
                 SoundKey::Favorite(sound.id),

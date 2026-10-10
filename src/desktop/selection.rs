@@ -66,6 +66,8 @@ pub(super) struct Selection {
     error: Option<String>,
     focus_id: Option<egui::Id>,
     active_reference: Option<Reference>,
+    scroll_offset: f32,
+    first_visible: usize,
 }
 
 #[derive(Clone)]
@@ -76,6 +78,47 @@ pub(super) struct SoundDrag {
 }
 
 impl Selection {
+    pub(super) fn retained_bytes(&self) -> usize {
+        self.keys_bytes
+            + self.keys.capacity() * (std::mem::size_of::<PathBuf>() + 1)
+            + self
+                .cursor
+                .as_ref()
+                .map_or(0, |cursor| cursor.source.as_os_str().len())
+            + self
+                .anchor
+                .as_ref()
+                .map_or(0, |cursor| cursor.source.as_os_str().len())
+            + self.active_reference.as_ref().map_or(0, |reference| {
+                reference.source.as_os_str().len()
+                    + reference.name.capacity()
+                    + reference.display_path.capacity()
+                    + reference.format.capacity()
+                    + reference
+                        .metadata_error
+                        .as_ref()
+                        .map_or(0, String::capacity)
+            })
+    }
+
+    pub(super) fn suspend(&mut self) {
+        self.interrupt("Range selection was cancelled; select the range again.");
+        self.focus_id = None;
+    }
+
+    pub(super) fn resume(&mut self, previous_generation: u64) {
+        self.suspend();
+        self.generation = self.generation.max(previous_generation) + 1;
+    }
+
+    pub(super) fn remember_scroll(&mut self, offset: f32, first_visible: usize) {
+        self.scroll_offset = offset;
+        self.first_visible = first_visible;
+    }
+
+    pub(super) fn first_visible(&self) -> usize {
+        self.first_visible
+    }
     pub(super) fn count(&self, total: usize) -> usize {
         if self.all {
             total.saturating_sub(self.keys.len())
@@ -133,8 +176,12 @@ impl Selection {
     }
 
     pub(super) fn refresh(&mut self) {
+        self.interrupt("Results changed; select the range again.");
+    }
+
+    fn interrupt(&mut self, message: &str) {
         if self.range.is_some() {
-            self.error = Some("Results changed; select the range again.".into());
+            self.error = Some(message.into());
         }
         self.generation += 1;
         self.range = None;
@@ -356,7 +403,7 @@ impl Selection {
                 - ui.available_height() * 0.5;
             area.vertical_scroll_offset(offset.max(0.0))
         } else {
-            area
+            area.vertical_scroll_offset(self.scroll_offset)
         }
     }
 

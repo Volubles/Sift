@@ -33,8 +33,9 @@ when it arrives. Repeated movement can coalesce while a page loads. Collection
 navigation crosses the existing 128-item page boundary automatically.
 
 Marks follow exact native source paths rather than display names or catalog
-IDs. Completed marks survive page eviction and refresh; changing the search,
-library/folder scope, or active collection clears them. A pending range is
+IDs. Completed marks survive page eviction and refresh. Changing the search
+clears that view's marks; [session navigation](NAVIGATION.md) restores completed
+marks when returning to a recently used library/folder or collection. A pending range is
 cancelled if its result context changes, and late replies cannot replace newer
 marks. Missing endpoints produce feedback without guessing a replacement.
 

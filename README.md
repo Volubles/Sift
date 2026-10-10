@@ -79,6 +79,10 @@ audition neighboring sounds. **F** toggles the active sound's favorite.
 **Ctrl+click**, **Shift+click**, and **Ctrl+A** mark sounds; see
 [selection and keyboard navigation](docs/SELECTION.md) for scope and page behavior.
 
+Recently used libraries, folders, and collections remember their search,
+selection, and list position while Sift is open. Returning prepares the selected
+sound silently. See [session navigation](docs/NAVIGATION.md).
+
 ### Keep a selection
 
 Star a sound to save it in **Favorites**, available across libraries and

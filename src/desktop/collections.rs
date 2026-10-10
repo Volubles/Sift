@@ -3,6 +3,7 @@ use std::{collections::BTreeSet, path::PathBuf};
 use super::favorites::{Favorites, star_button};
 use super::{
     SoundKey,
+    navigation::{RetainedState, Views},
     selection::{self, Gesture, Selection, SoundDrag},
 };
 use eframe::egui::{self, Color32, RichText};
@@ -14,6 +15,8 @@ use crate::collections::{
 
 pub(super) struct Collections {
     selection: Selection,
+    views: Views<CollectionId, CollectionView>,
+    restore_preview: bool,
     previous_marks: Option<CollectionMarks>,
     worker: Worker,
     pub(super) favorites: Favorites,
@@ -43,6 +46,18 @@ struct CollectionMarks {
     count: usize,
 }
 
+struct CollectionView {
+    selection: Selection,
+    offset: usize,
+    total: usize,
+}
+
+impl RetainedState for CollectionView {
+    fn retained_bytes(&self) -> usize {
+        self.selection.retained_bytes()
+    }
+}
+
 struct PendingSave {
     operation: u64,
     mutation: Mutation,
@@ -69,6 +84,33 @@ pub(super) enum Action {
 }
 
 impl Collections {
+    pub(super) fn active_reference(&self) -> Option<(SoundKey, Reference)> {
+        Some((
+            self.selection.active()?,
+            self.selection.reference()?.clone(),
+        ))
+    }
+
+    pub(super) fn take_preview_restore(&mut self) -> Option<Option<(SoundKey, Reference)>> {
+        if std::mem::take(&mut self.restore_preview) {
+            Some(self.active_reference())
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn suspend_view(&mut self) {
+        self.selection.suspend();
+        self.worker
+            .invalidate_entry_selection(self.selection.generation());
+    }
+
+    pub(super) fn resume_view(&mut self) -> Option<(SoundKey, Reference)> {
+        self.restore_preview = false;
+        self.refresh_entries();
+        self.request_pages();
+        self.active_reference()
+    }
     pub(super) fn selected_count(&self) -> usize {
         self.selection.count(self.entries_total)
     }
@@ -130,6 +172,8 @@ impl Collections {
     pub(super) fn new(worker: Worker) -> Self {
         Self {
             selection: Selection::default(),
+            views: Views::default(),
+            restore_preview: false,
             previous_marks: None,
             worker,
             favorites: Favorites::default(),
@@ -230,6 +274,11 @@ impl Collections {
                                     page.offset + position,
                                     &entry.reference.source,
                                 );
+                                if self.selection.active_source()
+                                    == Some(entry.reference.source.as_path())
+                                {
+                                    self.selection.remember(entry.reference.clone());
+                                }
                             }
                             if page.total > 0 && page.offset >= page.total {
                                 self.entries_offset = (page.total - 1) / PAGE_SIZE * PAGE_SIZE;
@@ -254,16 +303,37 @@ impl Collections {
                 {
                     match result {
                         Ok(change) => {
-                            if let Some(source) = self
-                                .save
-                                .as_ref()
-                                .filter(|save| matches!(&save.mutation, Mutation::Remove { collection, .. } if Some(*collection) == self.active))
-                                .and_then(|save| save.removed_source.as_ref())
+                            if let Some(save) = self.save.take()
+                                && let Mutation::Remove { collection, .. } = save.mutation
+                                && let Some(source) = save.removed_source
                             {
-                                self.selection.forget(source);
+                                if self.active == Some(collection) {
+                                    self.selection.forget(&source);
+                                } else if let Some(mut view) = self.views.take(&collection) {
+                                    view.selection.forget(&source);
+                                    view.total = view.total.saturating_sub(1);
+                                    self.views.remember(collection, view);
+                                }
                             }
-                            self.save = None;
                             self.dialog = None;
+                            match &change {
+                                Change::Deleted(id) => {
+                                    drop(self.views.take(id));
+                                }
+                                Change::Removed {
+                                    collection,
+                                    sources,
+                                } => {
+                                    if let Some(mut view) = self.views.take(collection) {
+                                        for source in sources {
+                                            view.selection.forget(source);
+                                        }
+                                        view.total = view.total.saturating_sub(sources.len());
+                                        self.views.remember(*collection, view);
+                                    }
+                                }
+                                _ => {}
+                            }
                             let removed_collection = match &change {
                                 Change::Removed { collection, .. }
                                 | Change::Deleted(collection) => Some(*collection),
@@ -303,6 +373,7 @@ impl Collections {
                                     self.active = None;
                                     self.entries = None;
                                     self.entries_total = 0;
+                                    self.restore_preview = true;
                                     self.entries_generation += 1;
                                 }
                                 _ => {}
@@ -341,10 +412,33 @@ impl Collections {
                 count: self.selected_count(),
             });
         }
-        self.selection.reset();
+        let previous_generation = self.selection.generation();
+        self.selection.suspend();
+        let restored = if let Some(previous) = self.active {
+            self.views.switch(
+                previous,
+                CollectionView {
+                    selection: std::mem::take(&mut self.selection),
+                    offset: self.entries_offset,
+                    total: self.entries_total,
+                },
+                &id,
+            )
+        } else {
+            self.views.take(&id)
+        };
+        self.restore_preview = true;
+        if let Some(view) = restored {
+            self.selection = view.selection;
+            self.entries_offset = view.offset;
+            self.entries_total = view.total;
+        } else {
+            self.selection = Selection::default();
+            self.entries_offset = 0;
+            self.entries_total = 0;
+        }
+        self.selection.resume(previous_generation);
         self.active = Some(id);
-        self.entries_total = 0;
-        self.entries_offset = 0;
         self.refresh_entries();
     }
 
@@ -364,6 +458,9 @@ impl Collections {
     }
 
     fn load_entry_page(&mut self, offset: usize) {
+        if self.entries_offset != offset {
+            self.selection.remember_scroll(0.0, offset);
+        }
         self.entries_offset = offset;
         self.entries_generation += 1;
         self.entries_pending = false;
@@ -669,7 +766,8 @@ impl Collections {
                     ui.label("Drop sounds onto the collection above, or add the marked sounds.");
                 }
                 let height = (ui.available_height() - 86.0).max(80.0);
-                self.selection
+                let scroll = self
+                    .selection
                     .scroll_area(
                         ui,
                         egui::ScrollArea::vertical()
@@ -678,6 +776,7 @@ impl Collections {
                         page.offset,
                     )
                     .show_rows(ui, 28.0, page.rows.len(), |ui, range| {
+                        let first_visible = page.offset + range.start;
                         for index in range {
                             let entry = &page.rows[index];
                             let key = SoundKey::Collection(entry.id);
@@ -748,6 +847,7 @@ impl Collections {
                                     }
                                     self.selection
                                         .activate(key, position, &entry.reference.source);
+                                    self.selection.remember(entry.reference.clone());
                                     self.previous_marks = None;
                                     selection::focus(ui, focus_id);
                                     choice = None;
@@ -783,7 +883,10 @@ impl Collections {
                                     .on_hover_text(entry.reference.source.display().to_string());
                             });
                         }
+                        first_visible
                     });
+                self.selection
+                    .remember_scroll(scroll.state.offset.y, scroll.inner);
                 let total = page.total;
                 if let Some(offset) = pager(ui, self.entries_offset, total) {
                     self.load_entry_page(offset);

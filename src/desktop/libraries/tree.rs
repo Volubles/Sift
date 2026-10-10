@@ -295,6 +295,10 @@ impl Libraries {
             ui.label(egui::RichText::new("Add a source folder to browse its sounds.").small());
         }
         let height = (ui.available_height() - 8.0).max(60.0);
+        let tree_rect = Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            egui::vec2(ui.available_width(), height),
+        );
         let stride = ROW_HEIGHT + ui.spacing().item_spacing.y;
         let focus_index = self
             .tree_focus
@@ -523,7 +527,26 @@ impl Libraries {
                 egui::Sense::focusable_noninteractive(),
             );
         }
-        self.tree_offset = output.state.offset.y;
+        let loaded = self
+            .expanded
+            .iter()
+            .all(|path| self.pages.contains_key(path));
+        let interacted = ui.input(|input| {
+            input
+                .pointer
+                .hover_pos()
+                .is_some_and(|position| tree_rect.contains(position))
+                && (input.pointer.any_down()
+                    || input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::MouseWheel { .. })))
+        });
+        // Loading placeholders can be shorter than the restored tree. Keep its
+        // requested position until the rows arrive, unless the user navigates.
+        if loaded || interacted || (self.focus_scroll && painted_focus) {
+            self.tree_offset = output.state.offset.y;
+        }
         if painted_focus {
             self.focus_scroll = false;
         }

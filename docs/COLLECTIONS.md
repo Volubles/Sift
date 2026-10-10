@@ -15,6 +15,9 @@ Saved items can be previewed and removed through their context menu.
 
 Contents support [multiple marks and keyboard navigation](SELECTION.md).
 W/S and Up/Down cross page boundaries; F toggles the active sound's favorite.
+Returning to a recently used collection restores its marks, active sound,
+content page, and scroll position without starting playback. See
+[Navigation](NAVIGATION.md) for session scope and limits.
 **Remove selected** removes the marked references from the current collection.
 A marked row's context menu removes its marked group; an unmarked row's menu
 removes only that reference. Group actions accept 1 to 128 sounds across pages.

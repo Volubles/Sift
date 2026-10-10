@@ -64,6 +64,23 @@ impl Preview {
         self.selected_key
     }
 
+    pub(super) fn restore(&mut self, reference: Reference, key: SoundKey) {
+        self.prepare(reference, key, Availability::Ready, None);
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.wave_generation += 1;
+        self.wave_pending = false;
+        self.waveform = None;
+        self.wave_error = None;
+        self.source_generation += 1;
+        self.source_check = None;
+        self.selected = None;
+        self.selected_key = None;
+        self.selected_stamp = None;
+        self.audio_error = self.player.stop().err().map(|error| error.to_string());
+    }
+
     pub(super) fn waveform_pending(&self) -> bool {
         self.wave_pending
     }
