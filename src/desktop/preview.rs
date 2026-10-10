@@ -1,14 +1,285 @@
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use eframe::egui::{self, Color32, RichText};
 
-use crate::audio::transport;
-use crate::collections::Availability;
-use crate::platform::DragWorker;
+use crate::audio::{player::Player, transport};
+use crate::catalog::Sample;
+use crate::collections::{Availability, Reference};
+use crate::library::FileStamp;
+use crate::waveform::{Waveform, Waveforms};
+use crate::worker::{SourceRefresh, Workers};
 
-use super::Browser;
+use super::SoundKey;
 
-impl Browser {
+/// Owns selection and preview generations; workers perform source inspection,
+/// waveform analysis, and playback outside the UI thread.
+pub(super) struct Preview {
+    waveforms: Waveforms,
+    player: Player,
+    waveform: Option<Arc<Waveform>>,
+    wave_generation: u64,
+    wave_pending: bool,
+    wave_error: Option<String>,
+    audio_error: Option<String>,
+    output_name: Option<String>,
+    volume: f32,
+    selected: Option<Reference>,
+    selected_key: Option<SoundKey>,
+    selected_availability: Availability,
+    selected_stamp: Option<FileStamp>,
+    source_generation: u64,
+    source_check: Option<SourceRefresh>,
+    auto_play: bool,
+}
+
+impl Preview {
+    pub(super) fn new(waveforms: Waveforms, player: Player) -> Self {
+        Self {
+            waveforms,
+            player,
+            waveform: None,
+            wave_generation: 0,
+            wave_pending: false,
+            wave_error: None,
+            audio_error: None,
+            output_name: None,
+            volume: 0.4,
+            selected: None,
+            selected_key: None,
+            selected_availability: Availability::Ready,
+            selected_stamp: None,
+            source_generation: 0,
+            source_check: None,
+            auto_play: false,
+        }
+    }
+
+    pub(super) fn selected(&self) -> Option<&Reference> {
+        self.selected.as_ref()
+    }
+
+    pub(super) fn key(&self) -> Option<SoundKey> {
+        self.selected_key
+    }
+
+    pub(super) fn waveform_pending(&self) -> bool {
+        self.wave_pending
+    }
+
+    pub(super) fn playback_phase(&self) -> u8 {
+        self.player.snapshot().phase
+    }
+
+    pub(super) fn update_availability(&mut self, availability: &Availability) {
+        if self.selected_availability != *availability {
+            self.selected_availability = availability.clone();
+        }
+    }
+
+    pub(super) fn refresh_catalog(&mut self, rows: &[Sample]) {
+        if let Some(SoundKey::Library(id)) = self.selected_key {
+            if let Some(sample) = rows.iter().find(|sample| sample.id == id) {
+                self.selected = Some(Reference::from(sample));
+            }
+        } else if self.selected.is_none()
+            && let Some(sample) = rows.first()
+        {
+            self.select(
+                Reference::from(sample),
+                SoundKey::Library(sample.id),
+                Availability::Ready,
+                sample.stamp.clone(),
+            );
+        }
+    }
+
+    pub(super) fn select(
+        &mut self,
+        sample: Reference,
+        key: SoundKey,
+        availability: Availability,
+        stamp: Option<FileStamp>,
+    ) {
+        let autoplay = self.auto_play;
+        self.wave_generation += 1;
+        self.waveform = None;
+        self.wave_error = match &availability {
+            Availability::Missing => {
+                Some("Source file is missing; the saved reference is retained".into())
+            }
+            Availability::Unavailable(error) => Some(format!("Source unavailable: {error}")),
+            _ => None,
+        };
+        self.audio_error = None;
+        self.wave_pending = sample.metadata_error.is_none() && availability.usable();
+        if self.wave_pending
+            && let Err(error) = self
+                .waveforms
+                .request(self.wave_generation, sample.source.clone())
+        {
+            self.wave_error = Some(error.to_string());
+            self.wave_pending = false;
+        }
+        let result = if autoplay && sample.metadata_error.is_none() && availability.usable() {
+            self.player.play(sample.source.clone(), 0.0)
+        } else {
+            self.player.stop()
+        };
+        if let Err(error) = result {
+            self.audio_error = Some(error.to_string());
+        }
+        self.selected = Some(sample);
+        self.selected_key = Some(key);
+        self.selected_availability = availability;
+        self.selected_stamp = stamp;
+        self.source_generation += 1;
+        self.source_check = Some(SourceRefresh::Verify);
+    }
+
+    pub(super) fn sources_changed(
+        &mut self,
+        touched: &[PathBuf],
+        full_roots: &[PathBuf],
+        forced_roots: &[PathBuf],
+    ) {
+        if self.selected.as_ref().is_some_and(|sound| {
+            touched
+                .iter()
+                .chain(full_roots)
+                .any(|path| sound.source.starts_with(path))
+        }) {
+            let observed_write = self.selected.as_ref().is_some_and(|sound| {
+                touched.contains(&sound.source)
+                    || forced_roots
+                        .iter()
+                        .any(|root| sound.source.starts_with(root))
+            });
+            self.source_generation += 1;
+            self.source_check = Some(if observed_write {
+                SourceRefresh::ObservedWrite
+            } else {
+                SourceRefresh::Verify
+            });
+        }
+    }
+
+    /// Returns whether a current reply refreshed the tracked source reference.
+    pub(super) fn source_ready(
+        &mut self,
+        generation: u64,
+        refresh: SourceRefresh,
+        sample: Option<Sample>,
+        stamp: Option<FileStamp>,
+        availability: Availability,
+    ) -> bool {
+        if generation != self.source_generation {
+            return false;
+        }
+        let mut reference_changed = false;
+        let metadata_changed =
+            sample
+                .as_ref()
+                .zip(self.selected.as_ref())
+                .is_some_and(|(current, previous)| {
+                    current.audio != previous.audio
+                        || current.size_bytes != previous.size_bytes
+                        || current.source != previous.source
+                        || current.metadata_error != previous.metadata_error
+                });
+        let changed = metadata_changed
+            || matches!(refresh, SourceRefresh::ObservedWrite)
+            || self
+                .selected_stamp
+                .as_ref()
+                .is_some_and(|previous| Some(previous) != stamp.as_ref());
+        self.selected_stamp = stamp;
+        self.selected_availability = availability.clone();
+        if let Some(sample) = sample {
+            if matches!(self.selected_key, Some(SoundKey::Library(_))) {
+                self.selected_key = Some(SoundKey::Library(sample.id));
+            }
+            self.selected = Some(Reference::from(&sample));
+            reference_changed = true;
+        }
+        if !availability.usable() {
+            self.wave_generation += 1;
+            self.wave_pending = false;
+            self.waveform = None;
+            self.wave_error = Some(match availability {
+                Availability::Missing => {
+                    "Source file is missing; saved references are retained".into()
+                }
+                Availability::Unavailable(message) => message,
+                _ => "Source unavailable".into(),
+            });
+            if let Err(error) = self.player.stop() {
+                self.audio_error = Some(error.to_string());
+            }
+        } else if changed {
+            if let Err(error) = self.player.stop() {
+                self.audio_error = Some(error.to_string());
+            }
+            self.wave_generation += 1;
+            self.waveform = None;
+            self.wave_error = None;
+            if let Some(sound) = &self.selected {
+                self.wave_pending = sound.metadata_error.is_none();
+                if self.wave_pending
+                    && let Err(error) = self
+                        .waveforms
+                        .rebuild(self.wave_generation, sound.source.clone())
+                {
+                    self.wave_error = Some(error.to_string());
+                    self.wave_pending = false;
+                }
+            }
+        }
+        reference_changed
+    }
+
+    pub(super) fn queue_source_check(&mut self, workers: &Workers) {
+        if let Some(refresh) = self.source_check
+            && let Some(reference) = &self.selected
+            && workers.check_source(self.source_generation, reference.clone(), refresh)
+        {
+            self.source_check = None;
+        }
+    }
+
+    pub(super) fn poll(&mut self) {
+        while let Some(ready) = self.waveforms.poll() {
+            if ready.generation != self.wave_generation {
+                continue;
+            }
+            self.wave_pending = false;
+            match ready.result {
+                Ok(waveform) => {
+                    self.waveform = Some(waveform);
+                    self.wave_error = None;
+                }
+                Err(error) => {
+                    eprintln!("Waveform analysis failed: {error}");
+                    self.wave_error = Some(error.to_string());
+                }
+            }
+        }
+        while let Some(message) = self.player.poll() {
+            if message.generation != self.player.generation() {
+                continue;
+            }
+            if let Some(error) = message.error {
+                eprintln!("Preview failed: {error}");
+                self.audio_error = Some(error);
+            }
+            if let Some(output) = message.output {
+                self.output_name = Some(output);
+                self.audio_error = None;
+            }
+        }
+    }
+
     pub(super) fn toggle_preview(&mut self) {
         let Some(sample) = &self.selected else {
             return;
@@ -26,7 +297,7 @@ impl Browser {
         }
     }
 
-    pub(super) fn preview(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn ui(&mut self, ui: &mut egui::Ui) {
         let snapshot = self.player.snapshot();
         let available = self
             .selected
@@ -161,7 +432,7 @@ impl Browser {
         }
     }
 
-    pub(super) fn details(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn details(&self, ui: &mut egui::Ui, drag_enabled: bool) {
         ui.heading("Sound details");
         ui.add_space(12.0);
         if let Some(sample) = &self.selected {
@@ -247,7 +518,7 @@ impl Browser {
             }
             ui.add_space(12.0);
             let response = ui.add_enabled(
-                DragWorker::supported() && !self.drags.busy(),
+                drag_enabled,
                 egui::Button::new("Drag copy to folder").sense(egui::Sense::click_and_drag()),
             );
             let dragged = response
@@ -261,4 +532,12 @@ impl Browser {
             ui.label("Choose a sound to inspect its metadata.");
         }
     }
+}
+
+#[cfg(all(test, sift_local_tests))]
+mod tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/desktop/preview.rs"
+    ));
 }

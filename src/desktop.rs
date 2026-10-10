@@ -15,11 +15,11 @@ use crate::collections::favorites::{Favorite, FavoriteId};
 use crate::collections::{
     Availability, Entry, EntryId, Reference, worker::Worker as CollectionWorker,
 };
-use crate::library::{FileStamp, ScanReport};
+use crate::library::ScanReport;
 use crate::platform::{DragError, DragWorker};
 use crate::search::{PAGE_SIZE, SearchQuery};
-use crate::waveform::{Waveform, Waveforms};
-use crate::worker::{Event, SourceRefresh, Workers};
+use crate::waveform::Waveforms;
+use crate::worker::{Event, Workers};
 
 mod collections;
 use collections::{Action as CollectionAction, Collections};
@@ -27,6 +27,7 @@ mod favorites;
 use favorites::{Action as FavoriteAction, star_button};
 mod libraries;
 mod preview;
+use preview::Preview;
 mod sound_table;
 use libraries::{Action as LibraryAction, Libraries};
 use sound_table::{table_heading, table_row};
@@ -119,21 +120,13 @@ fn selected_renderer() -> eframe::Result<eframe::Renderer> {
 
 struct Browser {
     workers: Workers,
-    waveforms: Waveforms,
-    player: Player,
+    preview: Preview,
     drags: DragWorker,
     collections: Collections,
     favorite_paths_dirty: bool,
     libraries: Libraries,
     sidebar: Sidebar,
     drag_error: Option<String>,
-    waveform: Option<Arc<Waveform>>,
-    wave_generation: u64,
-    wave_pending: bool,
-    wave_error: Option<String>,
-    audio_error: Option<String>,
-    output_name: Option<String>,
-    volume: f32,
     query_text: String,
     query: SearchQuery,
     generation: u64,
@@ -145,14 +138,7 @@ struct Browser {
     error: Option<String>,
     scan: Option<ScanReport>,
     scan_summary: Option<ScanReport>,
-    selected: Option<Reference>,
-    selected_key: Option<SoundKey>,
-    selected_availability: Availability,
-    selected_stamp: Option<FileStamp>,
-    source_generation: u64,
-    source_check: Option<SourceRefresh>,
     show_details: bool,
-    auto_play: bool,
     live_updates: bool,
     watch_message: String,
     automatic_scan: bool,
@@ -180,8 +166,7 @@ impl Browser {
     ) -> Self {
         Self {
             workers,
-            waveforms,
-            player,
+            preview: Preview::new(waveforms, player),
             drags,
             collections,
             libraries: Libraries::default(),
@@ -196,13 +181,6 @@ impl Browser {
             },
             favorite_paths_dirty: true,
             drag_error: None,
-            waveform: None,
-            wave_generation: 0,
-            wave_pending: false,
-            wave_error: None,
-            audio_error: None,
-            output_name: None,
-            volume: 0.4,
             query_text: String::new(),
             query: SearchQuery::All,
             generation: 0,
@@ -214,14 +192,7 @@ impl Browser {
             error: None,
             scan: None,
             scan_summary: None,
-            selected: None,
-            selected_key: None,
-            selected_availability: Availability::Ready,
-            selected_stamp: None,
-            source_generation: 0,
-            source_check: None,
             show_details: false,
-            auto_play: false,
             live_updates: cfg!(windows),
             watch_message: "Starting live updates...".into(),
             automatic_scan: false,
@@ -296,11 +267,10 @@ impl Browser {
 
     fn accept_events(&mut self, ctx: &egui::Context) {
         self.collections.poll();
-        if let Some(SoundKey::Collection(id)) = self.selected_key
+        if let Some(SoundKey::Collection(id)) = self.preview.key()
             && let Some(entry) = self.collections.selected_update(id)
-            && self.selected_availability != entry.availability
         {
-            self.selected_availability = entry.availability.clone();
+            self.preview.update_availability(&entry.availability);
         }
         while let Some(result) = self.drags.poll() {
             // OLE consumes the final mouse release in its modal loop. Reset egui
@@ -364,15 +334,7 @@ impl Browser {
                     Ok(page) => {
                         self.total = page.total;
                         self.pending.remove(&page.offset);
-                        if let Some(SoundKey::Library(id)) = self.selected_key {
-                            if let Some(updated) = page.rows.iter().find(|row| row.id == id) {
-                                self.selected = Some(Reference::from(updated));
-                            }
-                        } else if self.selected.is_none()
-                            && let Some(sample) = page.rows.first().cloned()
-                        {
-                            self.select_sample(sample);
-                        }
+                        self.preview.refresh_catalog(&page.rows);
                         insert_page(&mut self.pages, page);
                         self.favorite_paths_dirty = true;
                     }
@@ -428,25 +390,8 @@ impl Browser {
                             .cloned()
                             .collect::<Vec<_>>(),
                     );
-                    if self.selected.as_ref().is_some_and(|sound| {
-                        touched
-                            .iter()
-                            .chain(&full_roots)
-                            .any(|path| sound.source.starts_with(path))
-                    }) {
-                        let observed_write = self.selected.as_ref().is_some_and(|sound| {
-                            touched.contains(&sound.source)
-                                || forced_roots
-                                    .iter()
-                                    .any(|root| sound.source.starts_with(root))
-                        });
-                        self.source_generation += 1;
-                        self.source_check = Some(if observed_write {
-                            SourceRefresh::ObservedWrite
-                        } else {
-                            SourceRefresh::Verify
-                        });
-                    }
+                    self.preview
+                        .sources_changed(&touched, &full_roots, &forced_roots);
                     if report.errors > 0 || report.incomplete {
                         self.scan_summary = Some(report);
                     }
@@ -461,79 +406,18 @@ impl Browser {
                     sample,
                     stamp,
                     availability,
-                } if generation == self.source_generation => {
-                    let metadata_changed = sample.as_ref().zip(self.selected.as_ref()).is_some_and(
-                        |(current, previous)| {
-                            current.audio != previous.audio
-                                || current.size_bytes != previous.size_bytes
-                                || current.source != previous.source
-                                || current.metadata_error != previous.metadata_error
-                        },
-                    );
-                    let changed = metadata_changed
-                        || matches!(refresh, SourceRefresh::ObservedWrite)
-                        || self
-                            .selected_stamp
-                            .as_ref()
-                            .is_some_and(|previous| Some(previous) != stamp.as_ref());
-                    self.selected_stamp = stamp;
-                    self.selected_availability = availability.clone();
-                    if let Some(sample) = sample {
-                        if matches!(self.selected_key, Some(SoundKey::Library(_))) {
-                            self.selected_key = Some(SoundKey::Library(sample.id));
-                        }
-                        self.selected = Some(Reference::from(&sample));
-                        self.favorite_paths_dirty = true;
-                    }
-                    if !availability.usable() {
-                        self.wave_generation += 1;
-                        self.wave_pending = false;
-                        self.waveform = None;
-                        self.wave_error = Some(match availability {
-                            Availability::Missing => {
-                                "Source file is missing; saved references are retained".into()
-                            }
-                            Availability::Unavailable(message) => message,
-                            _ => "Source unavailable".into(),
-                        });
-                        if let Err(error) = self.player.stop() {
-                            self.audio_error = Some(error.to_string());
-                        }
-                    } else if changed {
-                        if let Err(error) = self.player.stop() {
-                            self.audio_error = Some(error.to_string());
-                        }
-                        self.wave_generation += 1;
-                        self.waveform = None;
-                        self.wave_error = None;
-                        if let Some(sound) = &self.selected {
-                            self.wave_pending = sound.metadata_error.is_none();
-                            if self.wave_pending
-                                && let Err(error) = self
-                                    .waveforms
-                                    .rebuild(self.wave_generation, sound.source.clone())
-                            {
-                                self.wave_error = Some(error.to_string());
-                                self.wave_pending = false;
-                            }
-                        }
-                    }
+                } => {
+                    self.favorite_paths_dirty |=
+                        self.preview
+                            .source_ready(generation, refresh, sample, stamp, availability);
                 }
-                Event::SourceReady { .. } => {}
                 Event::StartupFailed(message) => {
                     eprintln!("Sift catalog startup failed: {message}");
                     self.error = Some(format!("Catalog could not open: {message}"));
                 }
             }
         }
-        if let Some(refresh) = self.source_check
-            && let Some(reference) = &self.selected
-            && self
-                .workers
-                .check_source(self.source_generation, reference.clone(), refresh)
-        {
-            self.source_check = None;
-        }
+        self.preview.queue_source_check(&self.workers);
         if self.favorite_paths_dirty || self.collections.favorite_paths_dirty {
             let mut paths: BTreeSet<_> = self
                 .pages
@@ -541,51 +425,24 @@ impl Browser {
                 .flat_map(|page| &page.rows)
                 .map(|sample| sample.source.clone())
                 .collect();
-            if let Some(selected) = &self.selected {
+            if let Some(selected) = self.preview.selected() {
                 paths.insert(selected.source.clone());
             }
             self.collections.track_favorites(paths);
             self.favorite_paths_dirty = false;
         }
-        while let Some(ready) = self.waveforms.poll() {
-            if ready.generation != self.wave_generation {
-                continue;
-            }
-            self.wave_pending = false;
-            match ready.result {
-                Ok(waveform) => {
-                    self.waveform = Some(waveform);
-                    self.wave_error = None;
-                }
-                Err(error) => {
-                    eprintln!("Waveform analysis failed: {error}");
-                    self.wave_error = Some(error.to_string());
-                }
-            }
-        }
-        while let Some(message) = self.player.poll() {
-            if message.generation != self.player.generation() {
-                continue;
-            }
-            if let Some(error) = message.error {
-                eprintln!("Preview failed: {error}");
-                self.audio_error = Some(error);
-            }
-            if let Some(output) = message.output {
-                self.output_name = Some(output);
-                self.audio_error = None;
-            }
-        }
+        self.preview.poll();
     }
 
     fn select_sample(&mut self, sample: Sample) {
         let stamp = sample.stamp.clone();
-        self.select(
+        self.preview.select(
             Reference::from(&sample),
             SoundKey::Library(sample.id),
             Availability::Ready,
+            stamp,
         );
-        self.selected_stamp = stamp;
+        self.favorite_paths_dirty = true;
     }
 
     fn select_favorite(&mut self, favorite: Favorite) {
@@ -605,41 +462,8 @@ impl Browser {
     }
 
     fn select(&mut self, sample: Reference, key: SoundKey, availability: Availability) {
-        let autoplay = self.auto_play;
-        self.wave_generation += 1;
-        self.waveform = None;
-        self.wave_error = match &availability {
-            Availability::Missing => {
-                Some("Source file is missing; the saved reference is retained".into())
-            }
-            Availability::Unavailable(error) => Some(format!("Source unavailable: {error}")),
-            _ => None,
-        };
-        self.audio_error = None;
-        self.wave_pending = sample.metadata_error.is_none() && availability.usable();
-        if self.wave_pending
-            && let Err(error) = self
-                .waveforms
-                .request(self.wave_generation, sample.source.clone())
-        {
-            self.wave_error = Some(error.to_string());
-            self.wave_pending = false;
-        }
-        let result = if autoplay && sample.metadata_error.is_none() && availability.usable() {
-            self.player.play(sample.source.clone(), 0.0)
-        } else {
-            self.player.stop()
-        };
-        if let Err(error) = result {
-            self.audio_error = Some(error.to_string());
-        }
-        self.selected = Some(sample);
+        self.preview.select(sample, key, availability, None);
         self.favorite_paths_dirty = true;
-        self.selected_key = Some(key);
-        self.selected_availability = availability;
-        self.selected_stamp = None;
-        self.source_generation += 1;
-        self.source_check = Some(SourceRefresh::Verify);
     }
 
     fn begin_drag(&mut self, sample: Reference) {
@@ -836,7 +660,7 @@ impl Browser {
             return;
         }
         let mut needed = BTreeSet::new();
-        let selected_id = match self.selected_key {
+        let selected_id = match self.preview.key() {
             Some(SoundKey::Library(id)) => Some(id),
             _ => None,
         };
@@ -915,7 +739,7 @@ impl Browser {
             && self.collections.favorites.settled()
             && (self.sidebar != Sidebar::Libraries || self.libraries.settled())
             && self.scan.is_none()
-            && !self.wave_pending
+            && !self.preview.waveform_pending()
             && !self.pages.is_empty()
             && !self.screenshot_requested
         {
@@ -1085,7 +909,7 @@ impl eframe::App for Browser {
                 "frames={} input_events={} phase={}\n",
                 self.rendered_frames,
                 self.input_events,
-                self.player.snapshot().phase
+                self.preview.playback_phase()
             );
             use std::io::Write;
             let result = std::fs::OpenOptions::new()
@@ -1160,13 +984,13 @@ impl eframe::App for Browser {
                     if ui.button("Refresh favorites").clicked() { self.collections.favorites.reset_query(); }
                     return;
                 }
-                let selected_entry = match self.selected_key {
+                let selected_entry = match self.preview.key() {
                     Some(SoundKey::Collection(id)) => Some(id),
                     _ => None,
                 };
                 if let Some(action) =
                     self.collections
-                        .ui(ui, self.selected.as_ref(), selected_entry)
+                        .ui(ui, self.preview.selected(), selected_entry)
                 {
                     match action {
                         CollectionAction::Select(entry) => self.select_entry(entry),
@@ -1179,16 +1003,19 @@ impl eframe::App for Browser {
                 }
             });
         egui::Panel::top("header").show(ui, |ui| self.header(ui));
-        egui::Panel::top("preview").show(ui, |ui| self.preview(ui));
+        egui::Panel::top("preview").show(ui, |ui| self.preview.ui(ui));
         if self.show_details {
             egui::Panel::right("details")
                 .resizable(true)
                 .default_size(300.0)
-                .show(ui, |ui| self.details(ui));
+                .show(ui, |ui| {
+                    self.preview
+                        .details(ui, DragWorker::supported() && !self.drags.busy())
+                });
         }
         egui::CentralPanel::default().show(ui, |ui| {
             if self.sidebar == Sidebar::Favorites {
-                let selected = match self.selected_key {
+                let selected = match self.preview.key() {
                     Some(SoundKey::Favorite(id)) => Some(id),
                     _ => None,
                 };
@@ -1232,7 +1059,7 @@ impl eframe::App for Browser {
             && (self.sidebar != Sidebar::Libraries || !self.libraries.tree_has_focus(&ctx))
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
         {
-            self.toggle_preview();
+            self.preview.toggle_preview();
         }
         self.smoke_check(&ctx);
     }
