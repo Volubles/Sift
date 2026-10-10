@@ -117,6 +117,11 @@ the gesture. Original bytes and collection references stay in place.
 
 ## Current scope
 
+Click sound-table column headings to sort by filename, format, duration, sample
+rate, or channel count; click again to reverse direction. Collection contents
+have a compact sort menu, including the original added order. Marks and preview
+survive sorting. See [Sound ordering](docs/SORTING.md).
+
 The index recognizes **WAV, FLAC, MP3, and AIFF**. Container metadata support does
 not guarantee playback of every codec variant or compatibility with every device.
 

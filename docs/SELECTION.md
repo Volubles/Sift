@@ -52,8 +52,10 @@ marks. Missing endpoints produce feedback without guessing a replacement.
 Ctrl+A represents the current view as a whole, with individually excluded paths.
 It does not eagerly read all metadata or audio; new results in the same view
 are included after refresh. Explicit ranges resolve on the existing SQL worker
-using one snapshot and the current view's order: filename/ID for library and
-favorite results, insertion order for collection entries.
+using one snapshot and the current view's selected [sort order](SORTING.md).
+Changing order retains completed marks and the active preview, cancels unfinished
+ranges, and relocates the cursor and anchor by native identity before navigation
+resumes. Unknown metadata sorts last in both directions.
 
 Range replies and explicit mark/exclusion sets have limits of 1,000,000 paths
 and 8 MiB of path data each. Oversized ranges leave previous marks intact and

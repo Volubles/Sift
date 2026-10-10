@@ -2,7 +2,8 @@
 
 ## Inventories
 
-Catalog schema 3 preserves previous sample IDs and makes future IDs non-reused.
+Catalog schema 4 retains the non-reused sample IDs introduced by schema 3 and
+adds indexes for [sound ordering](SORTING.md).
 Metadata records include size, modified/creation timestamps, and a probe version.
 An unchanged inventory skips audio probing and persistent sample/FTS writes.
 Unknown timestamps are never assumed unchanged. Native write hints force probing,

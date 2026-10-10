@@ -9,24 +9,88 @@ fn sample_button(label: String, selected: bool) -> egui::Button<'static> {
         .sense(egui::Sense::click_and_drag())
 }
 
-pub(super) fn table_heading(ui: &mut egui::Ui) {
+pub(super) fn table_heading(ui: &mut egui::Ui, order: &mut crate::search::SortOrder) -> bool {
+    use crate::search::{SortDirection, SortField};
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
     let mut rect = rect;
     rect.min.x += 34.0;
-    paint_columns(
-        ui,
-        rect,
-        &[
-            "Filename".into(),
-            "Format".into(),
-            "Length".into(),
-            "Rate".into(),
-            "Ch".into(),
-        ],
-        Color32::GRAY,
-    );
+    let mut x = rect.left();
+    let mut changed = false;
+    for ((name, field), width) in [
+        ("Filename", SortField::Filename),
+        ("Format", SortField::Format),
+        ("Length", SortField::Length),
+        ("Rate", SortField::Rate),
+        ("Channels", SortField::Channels),
+    ]
+    .into_iter()
+    .zip(column_widths(rect.width()))
+    {
+        let cell =
+            egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(width, rect.height()))
+                .intersect(rect);
+        if cell.width() > 0.0 {
+            let direction = if order.direction == SortDirection::Ascending {
+                "ascending"
+            } else {
+                "descending"
+            };
+            let label = if order.field == field {
+                format!("{name}, {direction}")
+            } else {
+                name.to_owned()
+            };
+            let response = ui.interact(
+                cell,
+                ui.id().with(("sort-column", name)),
+                egui::Sense::click(),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    order.field == field,
+                    &label,
+                )
+            });
+            if response.hovered() {
+                ui.painter().rect_filled(cell, 2.0, Color32::from_gray(48));
+            }
+            let painter = ui
+                .painter()
+                .with_clip_rect(cell.shrink2(egui::vec2(6.0, 0.0)));
+            let text = painter.text(
+                egui::pos2(x + 8.0, cell.center().y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(13.0),
+                if order.field == field {
+                    Color32::from_rgb(135, 222, 194)
+                } else {
+                    Color32::GRAY
+                },
+            );
+            if order.field == field {
+                paint_sort_direction(
+                    &painter,
+                    egui::pos2(text.right() + 7.0, cell.center().y),
+                    order.direction,
+                    Color32::from_rgb(135, 222, 194),
+                );
+            }
+            if response
+                .on_hover_text(format!("Sort by {name}; click again to reverse"))
+                .clicked()
+            {
+                order.toggle(field);
+                changed = true;
+            }
+        }
+        x += width;
+    }
     ui.separator();
+    changed
 }
 
 struct SoundRow<'a> {
@@ -139,7 +203,7 @@ fn sound_row(
 }
 
 fn paint_columns(ui: &egui::Ui, rect: egui::Rect, values: &[String; 5], color: Color32) {
-    let widths = [(rect.width() - 280.0).max(80.0), 60.0, 80.0, 90.0, 50.0];
+    let widths = column_widths(rect.width());
     let mut x = rect.left();
     for (value, width) in values.iter().zip(widths) {
         let cell =
@@ -156,6 +220,33 @@ fn paint_columns(ui: &egui::Ui, rect: egui::Rect, values: &[String; 5], color: C
             );
         x += width;
     }
+}
+
+fn column_widths(width: f32) -> [f32; 5] {
+    [(width - 330.0).max(80.0), 70.0, 80.0, 90.0, 90.0]
+}
+
+pub(super) fn paint_sort_direction(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    direction: crate::search::SortDirection,
+    color: Color32,
+) {
+    let sign = if direction == crate::search::SortDirection::Ascending {
+        -1.0
+    } else {
+        1.0
+    };
+    let points = vec![
+        center + egui::vec2(0.0, 3.0 * sign),
+        center + egui::vec2(-3.5, -2.5 * sign),
+        center + egui::vec2(3.5, -2.5 * sign),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        points,
+        color,
+        egui::Stroke::NONE,
+    ));
 }
 
 #[cfg(all(test, sift_local_tests))]

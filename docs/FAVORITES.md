@@ -35,13 +35,14 @@ works when the source is missing.
 
 ## Storage and queries
 
-Favorites share the collection worker and schema-2 durable database. A STRICT
+Favorites share the collection worker and schema-3 durable database. A STRICT
 table stores a unique native locator, non-reused ID, saved metadata, and source
 revision. Schema-1 migration preserves existing collections and entries;
 failure rolls back the upgrade.
 
 Search uses literal trigram FTS5 and indexed short filename prefixes. Results
-sort by lowercase filename and ID. Count and rows share a snapshot, with at most
+use the selected typed sort order, defaulting to lowercase filename and ID.
+Count and rows share a snapshot, with at most
 128 returned rows; only those rows inspect source availability. The view retains
 four pages and renders visible rows.
 

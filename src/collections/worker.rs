@@ -62,6 +62,11 @@ pub enum Change {
 
 #[derive(Debug)]
 pub enum Event {
+    Positions {
+        generation: u64,
+        origin: SelectionOrigin,
+        result: Result<crate::search::SelectionPositions, String>,
+    },
     Ready,
     FavoriteSelection {
         generation: u64,
@@ -96,19 +101,29 @@ pub enum Event {
 }
 
 enum Command {
+    Positions {
+        generation: u64,
+        origin: SelectionOrigin,
+        order: crate::search::SortOrder,
+        active: PathBuf,
+        anchor: Option<PathBuf>,
+    },
     FavoriteSelection {
+        order: crate::search::SortOrder,
         generation: u64,
         query: SearchQuery,
         anchor: PathBuf,
         target: PathBuf,
     },
     EntrySelection {
+        order: crate::search::SortOrder,
         generation: u64,
         collection: CollectionId,
         anchor: PathBuf,
         target: PathBuf,
     },
     Favorites {
+        order: crate::search::SortOrder,
         generation: u64,
         query: SearchQuery,
         offset: usize,
@@ -122,6 +137,7 @@ enum Command {
         offset: usize,
     },
     Entries {
+        order: crate::search::SortOrder,
         generation: u64,
         collection: CollectionId,
         offset: usize,
@@ -190,6 +206,17 @@ impl Worker {
                 }
                 while let Ok(command) = jobs.recv() {
                     let stale_read = match &command {
+                        Command::Positions {
+                            generation, origin, ..
+                        } => {
+                            *generation
+                                < match origin {
+                                    SelectionOrigin::Favorites { .. } => {
+                                        favorite_selection.load(Ordering::Acquire)
+                                    }
+                                    _ => entry_selection.load(Ordering::Acquire),
+                                }
+                        }
                         Command::FavoriteSelection { generation, .. } => {
                             *generation < favorite_selection.load(Ordering::Acquire)
                         }
@@ -219,7 +246,40 @@ impl Worker {
                         continue;
                     }
                     let event = match command {
+                        Command::Positions {
+                            generation,
+                            origin,
+                            order,
+                            active,
+                            anchor,
+                        } => {
+                            let result = match &origin {
+                                SelectionOrigin::Favorites { query } => store
+                                    .favorite_selection_positions(
+                                        query,
+                                        order,
+                                        &active,
+                                        anchor.as_deref(),
+                                    ),
+                                SelectionOrigin::Collection(id) => store.entry_selection_positions(
+                                    *id,
+                                    order,
+                                    &active,
+                                    anchor.as_deref(),
+                                ),
+                                SelectionOrigin::Library { .. } => {
+                                    Err(super::Error::CatalogUnavailable)
+                                }
+                            }
+                            .map_err(|error| error.to_string());
+                            Event::Positions {
+                                generation,
+                                origin,
+                                result,
+                            }
+                        }
                         Command::FavoriteSelection {
+                            order,
                             generation,
                             query,
                             anchor,
@@ -227,10 +287,11 @@ impl Worker {
                         } => Event::FavoriteSelection {
                             generation,
                             result: store
-                                .favorite_selection_sources(&query, &anchor, &target)
+                                .favorite_selection_sources_ordered(&query, order, &anchor, &target)
                                 .map_err(|error| error.to_string()),
                         },
                         Command::EntrySelection {
+                            order,
                             generation,
                             collection,
                             anchor,
@@ -238,17 +299,20 @@ impl Worker {
                         } => Event::EntrySelection {
                             generation,
                             result: store
-                                .entry_selection_sources(collection, &anchor, &target)
+                                .entry_selection_sources_ordered(
+                                    collection, order, &anchor, &target,
+                                )
                                 .map_err(|error| error.to_string()),
                         },
                         Command::Favorites {
+                            order,
                             generation,
                             query,
                             offset,
                         } => Event::Favorites {
                             generation,
                             result: store
-                                .favorites(&query, offset)
+                                .favorites_ordered(&query, order, offset)
                                 .map_err(|error| error.to_string()),
                         },
                         Command::FavoriteStatus { generation, paths } => Event::FavoriteStatus {
@@ -262,6 +326,7 @@ impl Worker {
                             result: store.list(offset).map_err(|error| error.to_string()),
                         },
                         Command::Entries {
+                            order,
                             generation,
                             collection,
                             offset,
@@ -269,7 +334,7 @@ impl Worker {
                             generation,
                             collection,
                             result: store
-                                .entries(collection, offset)
+                                .entries_ordered(collection, order, offset)
                                 .map_err(|error| error.to_string()),
                         },
                         Command::Mutate {
@@ -356,9 +421,24 @@ impl Worker {
     }
 
     pub fn favorites(&self, generation: u64, query: SearchQuery, offset: usize) -> bool {
+        self.favorites_ordered(
+            generation,
+            query,
+            crate::search::SortOrder::default(),
+            offset,
+        )
+    }
+    pub fn favorites_ordered(
+        &self,
+        generation: u64,
+        query: SearchQuery,
+        order: crate::search::SortOrder,
+        offset: usize,
+    ) -> bool {
         self.favorites_generation
             .fetch_max(generation, Ordering::AcqRel);
         self.send_query(Command::Favorites {
+            order,
             generation,
             query,
             offset,
@@ -372,9 +452,26 @@ impl Worker {
         anchor: PathBuf,
         target: PathBuf,
     ) -> bool {
+        self.favorite_selection_ordered(
+            generation,
+            query,
+            crate::search::SortOrder::default(),
+            anchor,
+            target,
+        )
+    }
+    pub fn favorite_selection_ordered(
+        &self,
+        generation: u64,
+        query: SearchQuery,
+        order: crate::search::SortOrder,
+        anchor: PathBuf,
+        target: PathBuf,
+    ) -> bool {
         self.favorite_selection_generation
             .fetch_max(generation, Ordering::Relaxed);
         self.send_query(Command::FavoriteSelection {
+            order,
             generation,
             query,
             anchor,
@@ -399,9 +496,26 @@ impl Worker {
         anchor: PathBuf,
         target: PathBuf,
     ) -> bool {
+        self.entry_selection_ordered(
+            generation,
+            collection,
+            crate::search::SortOrder::INSERTION,
+            anchor,
+            target,
+        )
+    }
+    pub fn entry_selection_ordered(
+        &self,
+        generation: u64,
+        collection: CollectionId,
+        order: crate::search::SortOrder,
+        anchor: PathBuf,
+        target: PathBuf,
+    ) -> bool {
         self.entry_selection_generation
             .fetch_max(generation, Ordering::Relaxed);
         self.send_query(Command::EntrySelection {
+            order,
             generation,
             collection,
             anchor,
@@ -409,6 +523,26 @@ impl Worker {
         })
     }
 
+    pub fn positions(
+        &self,
+        generation: u64,
+        origin: SelectionOrigin,
+        order: crate::search::SortOrder,
+        active: PathBuf,
+        anchor: Option<PathBuf>,
+    ) -> bool {
+        match &origin {
+            SelectionOrigin::Favorites { .. } => self.invalidate_favorite_selection(generation),
+            _ => self.invalidate_entry_selection(generation),
+        }
+        self.send_query(Command::Positions {
+            generation,
+            origin,
+            order,
+            active,
+            anchor,
+        })
+    }
     pub fn favorite_status(&self, generation: u64, paths: Vec<PathBuf>) -> bool {
         self.status_generation
             .fetch_max(generation, Ordering::AcqRel);
@@ -422,9 +556,24 @@ impl Worker {
     }
 
     pub fn entries(&self, generation: u64, collection: CollectionId, offset: usize) -> bool {
+        self.entries_ordered(
+            generation,
+            collection,
+            crate::search::SortOrder::INSERTION,
+            offset,
+        )
+    }
+    pub fn entries_ordered(
+        &self,
+        generation: u64,
+        collection: CollectionId,
+        order: crate::search::SortOrder,
+        offset: usize,
+    ) -> bool {
         self.entries_generation
             .fetch_max(generation, Ordering::AcqRel);
         self.send_query(Command::Entries {
+            order,
             generation,
             collection,
             offset,
@@ -470,7 +619,12 @@ fn resolve_references(
             )?);
         }
         let catalog = catalog.as_mut().ok_or(super::Error::CatalogUnavailable)?;
-        Ok(catalog.selected_references(query, scope, &selection.sources)?)
+        Ok(catalog.selected_references_ordered(
+            query,
+            scope,
+            selection.order,
+            &selection.sources,
+        )?)
     } else {
         store.selected_references(selection)
     }

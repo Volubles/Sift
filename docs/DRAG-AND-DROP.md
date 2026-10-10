@@ -35,7 +35,7 @@ The payload captures its source view, query/scope, and native marks; storage
 resolves the full group in the background before saving. Single-reference drags
 from the details control still work. Crossing the client boundary consumes the
 captured payload once and submits the whole selection to the preparation worker.
-The query, scope, and native marks are immutable for that gesture; changing the
+The query, scope, sort order, and native marks are immutable for that gesture; changing the
 view cannot redirect it. Native copying starts only after the complete selection
 has been resolved, validated, and encoded. Missing explicit members, oversized
 groups, malformed storage, and invalid source files fail without offering a prefix.

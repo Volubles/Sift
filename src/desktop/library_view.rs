@@ -11,6 +11,7 @@ pub(super) struct LibraryView {
     pub query_text: String,
     pub query: SearchQuery,
     pub total: usize,
+    pub order: crate::search::SortOrder,
     location: Location,
     saved: Views<Location, SavedView>,
 }
@@ -19,6 +20,7 @@ struct SavedView {
     selection: Selection,
     query_text: String,
     total: usize,
+    order: crate::search::SortOrder,
 }
 
 impl RetainedState for SavedView {
@@ -42,6 +44,11 @@ impl LibraryView {
         } else {
             String::new()
         };
+        let initial_order = if self.location.library == location.library {
+            self.order
+        } else {
+            crate::search::SortOrder::default()
+        };
         let previous = std::mem::replace(&mut self.location, location);
         let restored = self.saved.switch(
             previous,
@@ -49,6 +56,7 @@ impl LibraryView {
                 selection: std::mem::take(&mut self.selection),
                 query_text,
                 total: self.total,
+                order: self.order,
             },
             &self.location,
         );
@@ -56,11 +64,13 @@ impl LibraryView {
             selection: Selection::default(),
             query_text: initial_query,
             total: 0,
+            order: initial_order,
         });
         self.selection = restored.selection;
         self.selection.resume(previous_generation);
         self.query_text = restored.query_text;
         self.total = restored.total;
+        self.order = restored.order;
         true
     }
 

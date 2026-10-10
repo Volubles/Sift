@@ -51,6 +51,22 @@ pub(super) struct RangeRequest {
     last: usize,
 }
 
+#[derive(Clone)]
+pub(super) struct PositionRequest {
+    pub generation: u64,
+    pub active: PathBuf,
+    pub anchor: Option<PathBuf>,
+    sent: bool,
+    intent: PositionIntent,
+    error: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum PositionIntent {
+    Refresh,
+    Reorder,
+}
+
 #[derive(Default)]
 pub(super) struct Selection {
     // Ctrl+A is a view-wide intent, not a million eagerly loaded references.
@@ -61,6 +77,7 @@ pub(super) struct Selection {
     anchor: Option<Cursor>,
     navigation: Option<(usize, Gesture)>,
     range: Option<RangeRequest>,
+    position: Option<PositionRequest>,
     generation: u64,
     scroll: Option<usize>,
     error: Option<String>,
@@ -177,6 +194,77 @@ impl Selection {
 
     pub(super) fn refresh(&mut self) {
         self.interrupt("Results changed; select the range again.");
+        self.locate(PositionIntent::Refresh);
+    }
+
+    pub(super) fn reorder(&mut self) {
+        self.interrupt("Order changed; select the range again.");
+        self.scroll_offset = 0.0;
+        self.first_visible = 0;
+        self.locate(PositionIntent::Reorder);
+    }
+
+    fn locate(&mut self, intent: PositionIntent) {
+        self.position = self.cursor.as_ref().map(|cursor| PositionRequest {
+            generation: self.generation,
+            active: cursor.source.clone(),
+            anchor: self.anchor.as_ref().map(|anchor| anchor.source.clone()),
+            sent: false,
+            intent,
+            error: None,
+        });
+    }
+
+    pub(super) fn position_request(&self) -> Option<PositionRequest> {
+        self.position
+            .as_ref()
+            .filter(|request| !request.sent)
+            .cloned()
+    }
+
+    pub(super) fn position_sent(&mut self) {
+        if let Some(request) = &mut self.position {
+            request.sent = true;
+        }
+    }
+
+    pub(super) fn positions_resolved(
+        &mut self,
+        generation: u64,
+        result: Result<crate::search::SelectionPositions, String>,
+    ) -> Option<usize> {
+        let request = self
+            .position
+            .as_ref()
+            .filter(|request| request.generation == generation)?;
+        let reveal = matches!(request.intent, PositionIntent::Reorder);
+        match result {
+            Ok(positions) => {
+                self.position = None;
+                if let (Some(cursor), Some(index)) = (&mut self.cursor, positions.active) {
+                    cursor.index = index;
+                } else {
+                    self.cursor = None;
+                }
+                if let (Some(anchor), Some(index)) = (&mut self.anchor, positions.anchor) {
+                    anchor.index = index;
+                } else {
+                    self.anchor = None;
+                }
+                if reveal && let Some(index) = positions.active {
+                    self.first_visible = index;
+                    self.scroll = Some(index);
+                    return Some(index);
+                }
+            }
+            Err(error) => {
+                eprintln!("Sound position lookup failed: {error}");
+                if let Some(request) = &mut self.position {
+                    request.error = Some(format!("Could not update sound positions: {error}"));
+                }
+            }
+        }
+        None
     }
 
     fn interrupt(&mut self, message: &str) {
@@ -185,6 +273,7 @@ impl Selection {
         }
         self.generation += 1;
         self.range = None;
+        self.position = None;
         self.navigation = None;
         self.scroll = None;
     }
@@ -247,6 +336,9 @@ impl Selection {
             source: source.to_path_buf(),
         });
         self.navigation = None;
+        if self.position.is_some() {
+            self.refresh();
+        }
     }
 
     pub(super) fn contains(&self, source: &Path, index: usize) -> bool {
@@ -262,9 +354,19 @@ impl Selection {
         self.all != self.keys.contains(source)
     }
 
-    pub(super) fn choose(&mut self, key: SoundKey, index: usize, source: &Path, gesture: Gesture) {
+    pub(super) fn choose(
+        &mut self,
+        key: SoundKey,
+        index: usize,
+        source: &Path,
+        gesture: Gesture,
+    ) -> bool {
+        if self.position.is_some() && matches!(gesture, Gesture::Extend { .. }) {
+            return false;
+        }
         self.generation += 1;
         self.range = None;
+        self.position = None;
         self.navigation = None;
         self.error = None;
         let cursor = Cursor {
@@ -310,6 +412,7 @@ impl Selection {
             }
         }
         self.cursor = Some(cursor);
+        true
     }
 
     pub(super) fn request(&self) -> Option<RangeRequest> {
@@ -471,6 +574,9 @@ impl Selection {
                 }
                 match key {
                     Key::W | Key::ArrowUp | Key::S | Key::ArrowDown if total > 0 => {
+                        if self.position.is_some() {
+                            return false;
+                        }
                         let current = self
                             .navigation
                             .map(|target| target.0)
@@ -506,7 +612,17 @@ impl Selection {
         favorite
     }
 
-    pub(super) fn feedback(&self, ui: &mut egui::Ui, total: usize) {
+    pub(super) fn feedback(&mut self, ui: &mut egui::Ui, total: usize) {
+        if let Some(request) = &mut self.position {
+            ui.label(egui::RichText::new("Updating list order...").small().weak());
+            if let Some(error) = &request.error {
+                ui.colored_label(egui::Color32::from_rgb(245, 143, 140), error);
+                if ui.small_button("Retry position lookup").clicked() {
+                    request.error = None;
+                    request.sent = false;
+                }
+            }
+        }
         if self.range.is_some() {
             ui.label(egui::RichText::new("Marking sounds...").small().weak());
         } else {

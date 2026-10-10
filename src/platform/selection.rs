@@ -35,7 +35,7 @@ impl SelectionReader {
                 self.catalog
                     .as_mut()
                     .ok_or_else(unavailable)?
-                    .selected_references(query, scope, &selection.sources)
+                    .selected_references_ordered(query, scope, selection.order, &selection.sources)
                     .map_err(selection_error)?
             }
             _ => {

@@ -29,6 +29,7 @@ pub(super) struct Collections {
     groups_failed: bool,
     entries: Option<Page<Entry>>,
     entries_total: usize,
+    order: crate::search::SortOrder,
     entries_generation: u64,
     entries_offset: usize,
     entries_pending: bool,
@@ -44,12 +45,14 @@ struct CollectionMarks {
     collection: CollectionId,
     sources: Result<crate::search::SourceSelection, String>,
     count: usize,
+    order: crate::search::SortOrder,
 }
 
 struct CollectionView {
     selection: Selection,
     offset: usize,
     total: usize,
+    order: crate::search::SortOrder,
 }
 
 impl RetainedState for CollectionView {
@@ -126,12 +129,14 @@ impl Collections {
     ) -> Result<crate::collections::ReferenceSelection, String> {
         if let Some(marks) = &self.previous_marks {
             return Ok(crate::collections::ReferenceSelection {
+                order: marks.order,
                 origin: crate::collections::SelectionOrigin::Collection(marks.collection),
                 sources: marks.sources.clone()?,
             });
         }
         let collection = self.active.ok_or("Choose a collection")?;
         Ok(crate::collections::ReferenceSelection {
+            order: self.order,
             origin: crate::collections::SelectionOrigin::Collection(collection),
             sources: self.selection.snapshot(self.entries_total)?,
         })
@@ -186,6 +191,7 @@ impl Collections {
             groups_failed: false,
             entries: None,
             entries_total: 0,
+            order: crate::search::SortOrder::INSERTION,
             entries_generation: 0,
             entries_offset: 0,
             entries_pending: false,
@@ -218,6 +224,23 @@ impl Collections {
                 Event::FavoriteSelection { generation, result } => {
                     self.favorites.selection_result(generation, result)
                 }
+                Event::Positions {
+                    generation,
+                    origin,
+                    result,
+                } => match origin {
+                    crate::collections::SelectionOrigin::Favorites { .. } => {
+                        self.favorites.positions(&self.worker, generation, result)
+                    }
+                    crate::collections::SelectionOrigin::Collection(id)
+                        if self.active == Some(id) =>
+                    {
+                        if let Some(index) = self.selection.positions_resolved(generation, result) {
+                            self.load_entry_page(index / PAGE_SIZE * PAGE_SIZE);
+                        }
+                    }
+                    _ => {}
+                },
                 Event::EntrySelection { generation, result } => {
                     self.selection.resolved(generation, result)
                 }
@@ -410,6 +433,7 @@ impl Collections {
                 collection,
                 sources: self.selection.snapshot(self.entries_total),
                 count: self.selected_count(),
+                order: self.order,
             });
         }
         let previous_generation = self.selection.generation();
@@ -421,6 +445,7 @@ impl Collections {
                     selection: std::mem::take(&mut self.selection),
                     offset: self.entries_offset,
                     total: self.entries_total,
+                    order: self.order,
                 },
                 &id,
             )
@@ -432,10 +457,12 @@ impl Collections {
             self.selection = view.selection;
             self.entries_offset = view.offset;
             self.entries_total = view.total;
+            self.order = view.order;
         } else {
             self.selection = Selection::default();
             self.entries_offset = 0;
             self.entries_total = 0;
+            self.order = crate::search::SortOrder::INSERTION;
         }
         self.selection.resume(previous_generation);
         self.active = Some(id);
@@ -468,7 +495,31 @@ impl Collections {
         self.request_pages();
     }
 
+    fn reorder(&mut self, order: crate::search::SortOrder) {
+        self.order = order;
+        self.selection.reorder();
+        self.entries_offset = 0;
+        self.entries_generation += 1;
+        self.entries = None;
+        self.entries_pending = false;
+        self.entries_failed = false;
+        self.request_pages();
+    }
+
     fn request_pages(&mut self) {
+        if self.ready
+            && let Some(id) = self.active
+            && let Some(request) = self.selection.position_request()
+            && self.worker.positions(
+                request.generation,
+                crate::collections::SelectionOrigin::Collection(id),
+                self.order,
+                request.active,
+                request.anchor,
+            )
+        {
+            self.selection.position_sent();
+        }
         if self.ready && self.groups.is_none() && !self.groups_pending && !self.groups_failed {
             self.groups_pending = self
                 .worker
@@ -483,9 +534,12 @@ impl Collections {
             && !self.entries_failed
             && let Some(id) = self.active
         {
-            self.entries_pending =
-                self.worker
-                    .entries(self.entries_generation, id, self.entries_offset);
+            self.entries_pending = self.worker.entries_ordered(
+                self.entries_generation,
+                id,
+                self.order,
+                self.entries_offset,
+            );
         }
     }
 
@@ -703,6 +757,56 @@ impl Collections {
         {
             self.mutate(mutation);
         }
+        if self.active.is_some() {
+            let mut order = self.order;
+            ui.horizontal(|ui| {
+                ui.label("Sort");
+                egui::ComboBox::from_id_salt("collection-sort")
+                    .selected_text(sort_label(order.field))
+                    .show_ui(ui, |ui| {
+                        use crate::search::SortField;
+                        for field in [
+                            SortField::Added,
+                            SortField::Filename,
+                            SortField::Format,
+                            SortField::Length,
+                            SortField::Rate,
+                            SortField::Channels,
+                        ] {
+                            if ui
+                                .selectable_label(order.field == field, sort_label(field))
+                                .clicked()
+                            {
+                                order.toggle(field);
+                                ui.close();
+                            }
+                        }
+                    });
+                let reverse =
+                    ui.add_sized([24.0, ui.spacing().interact_size.y], egui::Button::new(""));
+                reverse.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        "Reverse sort direction",
+                    )
+                });
+                super::sound_table::paint_sort_direction(
+                    ui.painter(),
+                    reverse.rect.center(),
+                    order.direction,
+                    ui.visuals().text_color(),
+                );
+                if reverse.on_hover_text("Reverse sort direction").clicked() {
+                    order.toggle(order.field);
+                }
+            });
+            if order != self.order {
+                self.reorder(order);
+                selection::focus(ui, ui.make_persistent_id("collection-sound-focus"));
+                return None;
+            }
+        }
         let mut remove = None;
         let mut favorite = None;
         let focus_id = ui.make_persistent_id("collection-sound-focus");
@@ -912,12 +1016,14 @@ impl Collections {
         }
         if let Some((entry, index, gesture)) = choice {
             self.previous_marks = None;
-            self.selection.choose(
+            if !self.selection.choose(
                 SoundKey::Collection(entry.id),
                 index,
                 &entry.reference.source,
                 gesture,
-            );
+            ) {
+                return None;
+            }
             self.selection.remember(entry.reference.clone());
             ui.ctx().request_repaint();
             action = Some(Action::Select(entry));
@@ -949,9 +1055,10 @@ impl Collections {
         }
         if let Some(request) = self.selection.request()
             && let Some(collection) = self.active
-            && self.worker.entry_selection(
+            && self.worker.entry_selection_ordered(
                 request.generation,
                 collection,
+                self.order,
                 request.anchor,
                 request.target,
             )
@@ -1132,6 +1239,18 @@ fn pager(ui: &mut egui::Ui, offset: usize, total: usize) -> Option<usize> {
         next
     })
     .inner
+}
+
+fn sort_label(field: crate::search::SortField) -> &'static str {
+    use crate::search::SortField;
+    match field {
+        SortField::Added => "Added order",
+        SortField::Filename => "Filename",
+        SortField::Format => "Format",
+        SortField::Length => "Length",
+        SortField::Rate => "Rate",
+        SortField::Channels => "Channels",
+    }
 }
 
 #[cfg(all(test, sift_local_tests))]

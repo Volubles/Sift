@@ -24,6 +24,12 @@ pub struct SortOrder {
     pub direction: SortDirection,
 }
 
+pub(crate) enum Boundary {
+    Before,
+    AtOrBefore,
+    AtOrAfter,
+}
+
 impl SortOrder {
     pub const INSERTION: Self = Self {
         field: SortField::Added,
@@ -70,10 +76,11 @@ impl SortOrder {
     pub(crate) fn boundary(
         self,
         key: &OrderKey,
-        before: bool,
-        inclusive: bool,
+        boundary: Boundary,
         values: &mut Vec<Value>,
     ) -> String {
+        let before = matches!(boundary, Boundary::Before | Boundary::AtOrBefore);
+        let inclusive = !matches!(boundary, Boundary::Before);
         let column = self.column();
         let less = before == (self.direction == SortDirection::Ascending);
         let strict = if less { "<" } else { ">" };

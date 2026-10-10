@@ -14,15 +14,19 @@ position rather than centering each newly activated sound.
 | View | State |
 | --- | --- |
 | Library | Last folder, expanded branches, folder paging, and tree scroll |
-| Library or folder sound table | Search text, completed marks, active sound, and scroll position |
-| Collection | Completed marks, active sound, content page, and scroll position |
-| Favorites | Its independent search, completed marks, active sound, and scroll position |
+| Library or folder sound table | Search text, sort order, completed marks, active sound, and scroll position |
+| Collection | Sort order, completed marks, active sound, content page, and scroll position |
+| Favorites | Its independent search, sort order, completed marks, active sound, and scroll position |
 
 Folders are identified by their native paths within a library, and collections
 by their durable IDs. Similarly named folders or libraries keep separate state.
 A previously unvisited folder inherits the search within its current library;
 returning to a visited folder restores that folder's own search. A new library
 starts with an empty search.
+
+New folders inherit ordering within their library; revisited folders restore
+their own order. New libraries use filename order and new collection views use
+insertion order. See [Sound ordering](SORTING.md) for controls and selection rules.
 
 Changing search text resets that view's marks and scroll. Completed marks survive
 navigation and refresh. Unfinished range selection and queued keyboard movement

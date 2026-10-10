@@ -21,6 +21,7 @@ pub(super) struct Favorites {
     selection: Selection,
     pub(super) query_text: String,
     query: SearchQuery,
+    order: crate::search::SortOrder,
     generation: u64,
     view_generation: u64,
     pages: VecDeque<Page<Favorite>>,
@@ -64,6 +65,7 @@ impl Favorites {
         &self,
     ) -> Result<crate::collections::ReferenceSelection, String> {
         Ok(crate::collections::ReferenceSelection {
+            order: self.order,
             origin: crate::collections::SelectionOrigin::Favorites {
                 query: self.query.clone(),
             },
@@ -77,6 +79,9 @@ impl Favorites {
     pub(super) fn set_active(&mut self, active: bool) {
         if self.active && !active {
             self.selection.suspend();
+        }
+        if active && !self.active {
+            self.refresh();
         }
         self.active = active;
     }
@@ -141,6 +146,20 @@ impl Favorites {
                 self.desired.iter().cloned().collect(),
             );
         }
+        if self.active
+            && let Some(request) = self.selection.position_request()
+            && worker.positions(
+                request.generation,
+                crate::collections::SelectionOrigin::Favorites {
+                    query: self.query.clone(),
+                },
+                self.order,
+                request.active,
+                request.anchor,
+            )
+        {
+            self.selection.position_sent();
+        }
         if self.active && self.pages.is_empty() {
             self.request_page(worker, 0);
         }
@@ -150,10 +169,28 @@ impl Favorites {
         if self.error.is_none()
             && !self.pending.contains(&offset)
             && !self.pages.iter().any(|page| page.offset == offset)
-            && worker.favorites(self.generation, self.query.clone(), offset)
+            && worker.favorites_ordered(self.generation, self.query.clone(), self.order, offset)
         {
             self.pending.insert(offset);
         }
+    }
+
+    pub(super) fn positions(
+        &mut self,
+        worker: &Worker,
+        generation: u64,
+        result: Result<crate::search::SelectionPositions, String>,
+    ) {
+        if let Some(index) = self.selection.positions_resolved(generation, result) {
+            self.request_page(worker, index / PAGE_SIZE * PAGE_SIZE);
+        }
+    }
+
+    fn reorder(&mut self) {
+        self.selection.reorder();
+        self.generation += 1;
+        self.pages.clear();
+        self.pending.clear();
     }
 
     pub(super) fn page(&mut self, generation: u64, result: Result<Page<Favorite>, String>) {
@@ -381,7 +418,12 @@ impl Favorites {
         let mut action = None;
         let mut remove = None;
         self.selection.feedback(ui, self.total);
-        table_heading(ui);
+        if table_heading(ui, &mut self.order) {
+            self.reorder();
+            self.request(worker, ready);
+            selection::focus(ui, focus_id);
+            return None;
+        }
         let scroll = self
             .selection
             .scroll_area(
@@ -468,12 +510,14 @@ impl Favorites {
         self.selection
             .remember_scroll(scroll.state.offset.y, scroll.inner);
         if let Some((sound, index, gesture)) = choice {
-            self.selection.choose(
+            if !self.selection.choose(
                 SoundKey::Favorite(sound.id),
                 index,
                 &sound.reference.source,
                 gesture,
-            );
+            ) {
+                return None;
+            }
             self.selection.remember(sound.reference.clone());
             ui.ctx().request_repaint();
             action = Some(Action::Select(sound));
@@ -510,9 +554,10 @@ impl Favorites {
             self.request_page(worker, index / PAGE_SIZE * PAGE_SIZE);
         }
         if let Some(request) = self.selection.request()
-            && worker.favorite_selection(
+            && worker.favorite_selection_ordered(
                 request.generation,
                 self.query.clone(),
+                self.order,
                 request.anchor,
                 request.target,
             )

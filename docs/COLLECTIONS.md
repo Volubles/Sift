@@ -38,14 +38,18 @@ cancels that gesture rather than adding another internal item.
 ## Durable data
 
 Collections and [Favorites](FAVORITES.md) share `catalog.collections.sqlite`.
-Schema 2 uses STRICT tables, foreign keys, WAL, and FULL synchronization.
-Schema-1 upgrades are transactional. Unknown versions or unrelated databases
+Schema 3 uses STRICT tables, foreign keys, WAL, and FULL synchronization.
+Schema-1 and schema-2 upgrades are transactional. Unknown versions or unrelated databases
 return errors without resetting user data.
 
 Collection and entry IDs are independent, typed, non-reused identities. They
 have no foreign-key dependency on rebuildable catalog rows. Entries retain
 native source paths, last-known display/audio metadata, revision information,
 and stable insertion order. Display strings are not file-operation locators.
+
+Schema 3 adds Unicode filename keys and view-order indexes. The compact contents
+sort menu changes display order without changing saved insertion order. IDs and
+membership survive migration; see [Sound ordering](SORTING.md).
 
 Names are trimmed, limited to 120 characters, and unique by a Unicode lowercase
 key. Page reads and batch adds are limited to 128 items. Batch changes commit

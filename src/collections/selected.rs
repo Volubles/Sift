@@ -17,6 +17,7 @@ pub enum SelectionOrigin {
 pub struct ReferenceSelection {
     pub origin: SelectionOrigin,
     pub sources: SourceSelection,
+    pub order: crate::search::SortOrder,
 }
 
 impl Store {
@@ -24,14 +25,13 @@ impl Store {
         &mut self,
         selection: &ReferenceSelection,
     ) -> Result<Vec<Reference>> {
-        let (table, order, condition, values) = match &selection.origin {
+        let (table, condition, values) = match &selection.origin {
             SelectionOrigin::Favorites { query } => {
                 let (condition, values) = super::favorites::favorite_condition(query);
-                ("favorites", "name_key,id", condition, values)
+                ("favorites", condition, values)
             }
             SelectionOrigin::Collection(collection) => (
                 "entries",
-                "id",
                 "collection_id=?1",
                 vec![Value::Integer(collection.0)],
             ),
@@ -41,7 +41,7 @@ impl Store {
         let identities = crate::search::batch::selected_rows(
             &transaction,
             table,
-            order,
+            &selection.order.sql(),
             condition,
             values,
             &selection.sources,

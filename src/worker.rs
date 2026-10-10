@@ -22,6 +22,10 @@ pub enum Event {
         generation: u64,
         result: std::result::Result<crate::search::SelectionSources, String>,
     },
+    Positions {
+        generation: u64,
+        result: std::result::Result<crate::search::SelectionPositions, String>,
+    },
     Page {
         generation: u64,
         result: std::result::Result<SearchPage, String>,
@@ -61,16 +65,26 @@ pub enum Event {
 struct QueryRequest {
     generation: u64,
     query: SearchQuery,
+    order: crate::search::SortOrder,
     offset: usize,
     scope: Scope,
 }
 
 enum ReadRequest {
     Search(QueryRequest),
+    Positions {
+        generation: u64,
+        query: SearchQuery,
+        scope: Scope,
+        order: crate::search::SortOrder,
+        active: PathBuf,
+        anchor: Option<PathBuf>,
+    },
     Selection {
         generation: u64,
         query: SearchQuery,
         scope: Scope,
+        order: crate::search::SortOrder,
         anchor: PathBuf,
         target: PathBuf,
     },
@@ -222,6 +236,7 @@ impl Workers {
                             generation,
                             query,
                             scope,
+                            order,
                             anchor,
                             target,
                         } => {
@@ -232,7 +247,34 @@ impl Workers {
                             Event::Selection {
                                 generation,
                                 result: reader
-                                    .selection_sources(&query, &scope, &anchor, &target)
+                                    .selection_sources_ordered(
+                                        &query, &scope, order, &anchor, &target,
+                                    )
+                                    .map_err(|error| error.to_string()),
+                            }
+                        }
+                        ReadRequest::Positions {
+                            generation,
+                            query,
+                            scope,
+                            order,
+                            active,
+                            anchor,
+                        } => {
+                            if generation < selection_generation.load(Ordering::Relaxed) {
+                                wake();
+                                continue;
+                            }
+                            Event::Positions {
+                                generation,
+                                result: reader
+                                    .selection_positions(
+                                        &query,
+                                        &scope,
+                                        order,
+                                        &active,
+                                        anchor.as_deref(),
+                                    )
                                     .map_err(|error| error.to_string()),
                             }
                         }
@@ -244,7 +286,12 @@ impl Workers {
                             Event::Page {
                                 generation: request.generation,
                                 result: reader
-                                    .search_scoped(&request.query, &request.scope, request.offset)
+                                    .search_ordered(
+                                        &request.query,
+                                        &request.scope,
+                                        request.order,
+                                        request.offset,
+                                    )
                                     .map_err(|error| error.to_string()),
                             }
                         }
@@ -336,6 +383,25 @@ impl Workers {
         anchor: PathBuf,
         target: PathBuf,
     ) -> bool {
+        self.selection_ordered(
+            generation,
+            query,
+            scope,
+            crate::search::SortOrder::default(),
+            anchor,
+            target,
+        )
+    }
+
+    pub fn selection_ordered(
+        &self,
+        generation: u64,
+        query: SearchQuery,
+        scope: Scope,
+        order: crate::search::SortOrder,
+        anchor: PathBuf,
+        target: PathBuf,
+    ) -> bool {
         self.latest_selection_generation
             .fetch_max(generation, Ordering::Relaxed);
         self.queries.as_ref().is_some_and(|sender| {
@@ -344,8 +410,34 @@ impl Workers {
                     generation,
                     query,
                     scope,
+                    order,
                     anchor,
                     target,
+                })
+                .is_ok()
+        })
+    }
+
+    pub fn positions(
+        &self,
+        generation: u64,
+        query: SearchQuery,
+        scope: Scope,
+        order: crate::search::SortOrder,
+        active: PathBuf,
+        anchor: Option<PathBuf>,
+    ) -> bool {
+        self.latest_selection_generation
+            .fetch_max(generation, Ordering::Relaxed);
+        self.queries.as_ref().is_some_and(|sender| {
+            sender
+                .try_send(ReadRequest::Positions {
+                    generation,
+                    query,
+                    scope,
+                    order,
+                    active,
+                    anchor,
                 })
                 .is_ok()
         })
@@ -363,6 +455,23 @@ impl Workers {
         scope: Scope,
         offset: usize,
     ) -> bool {
+        self.query_ordered(
+            generation,
+            query,
+            scope,
+            crate::search::SortOrder::default(),
+            offset,
+        )
+    }
+
+    pub fn query_ordered(
+        &self,
+        generation: u64,
+        query: SearchQuery,
+        scope: Scope,
+        order: crate::search::SortOrder,
+        offset: usize,
+    ) -> bool {
         self.latest_generation
             .fetch_max(generation, Ordering::Relaxed);
         self.queries.as_ref().is_some_and(|sender| {
@@ -372,6 +481,7 @@ impl Workers {
                     query,
                     offset,
                     scope,
+                    order,
                 }))
                 .is_ok()
         })

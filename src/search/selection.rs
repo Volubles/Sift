@@ -1,4 +1,7 @@
-use super::{SelectionPositions, SelectionSources, SortOrder, order::OrderKey};
+use super::{
+    SelectionPositions, SelectionSources, SortOrder,
+    order::{Boundary, OrderKey},
+};
 use crate::path_codec;
 use rusqlite::{
     Connection, OptionalExtension, Transaction, params_from_iter,
@@ -72,10 +75,16 @@ pub(crate) fn range_sources(
         return Ok(SelectionSources::MissingEndpoint);
     };
     let mut values = view.values.clone();
-    let after_first = view.order.boundary(&first, false, true, &mut values);
-    let before_last = view.order.boundary(&last, true, true, &mut values);
-    let after_last = view.order.boundary(&last, false, true, &mut values);
-    let before_first = view.order.boundary(&first, true, true, &mut values);
+    let after_first = view
+        .order
+        .boundary(&first, Boundary::AtOrAfter, &mut values);
+    let before_last = view
+        .order
+        .boundary(&last, Boundary::AtOrBefore, &mut values);
+    let after_last = view.order.boundary(&last, Boundary::AtOrAfter, &mut values);
+    let before_first = view
+        .order
+        .boundary(&first, Boundary::AtOrBefore, &mut values);
     let sql = format!(
         "SELECT source_path FROM {} WHERE ({}) AND (({after_first} AND {before_last}) OR ({after_last} AND {before_first})) ORDER BY {} LIMIT {}",
         view.table.sql(),
@@ -116,7 +125,7 @@ pub(crate) fn positions(
             return Ok(None);
         };
         let mut parameters = view.values.clone();
-        let before = view.order.boundary(&key, true, false, &mut parameters);
+        let before = view.order.boundary(&key, Boundary::Before, &mut parameters);
         let sql = format!(
             "SELECT count(*) FROM {} WHERE ({}) AND ({before})",
             view.table.sql(),

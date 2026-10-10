@@ -28,6 +28,11 @@ unsupported audio.
 External dragging offers copying to Explorer. The destination owns copying
 progress and conflicts. Internal dragging adds references to collections.
 
+Libraries and Favorites have sortable column headings. Collection contents
+provide a compact sort menu with an insertion-order option. Sorting preserves
+marked source identities and the active preview; queries and ranges share the
+selected order. Numeric unknowns sort last. See [Sound ordering](SORTING.md).
+
 ## Data preservation
 
 Library registration, collection edits, and favoriting leave source names,

@@ -299,6 +299,7 @@ impl Browser {
     fn marked_selection(&self) -> Result<crate::collections::ReferenceSelection, String> {
         match self.marked_view {
             Sidebar::Libraries => Ok(crate::collections::ReferenceSelection {
+                order: self.library_view.order,
                 origin: crate::collections::SelectionOrigin::Library {
                     query: self.library_view.query.clone(),
                     scope: self.libraries.scope(),
@@ -356,15 +357,43 @@ impl Browser {
         }
     }
 
+    fn reorder_list(&mut self) {
+        self.library_view.selection.reorder();
+        self.workers
+            .invalidate_selection(self.library_view.selection.generation());
+        self.generation += 1;
+        self.pages.clear();
+        self.pending.clear();
+        self.request_list_positions();
+        self.request_page(0);
+    }
+
+    fn request_list_positions(&mut self) {
+        if self.ready
+            && let Some(request) = self.library_view.selection.position_request()
+            && self.workers.positions(
+                request.generation,
+                self.library_view.query.clone(),
+                self.libraries.scope(),
+                self.library_view.order,
+                request.active,
+                request.anchor,
+            )
+        {
+            self.library_view.selection.position_sent();
+        }
+    }
+
     fn request_page(&mut self, offset: usize) {
         if self.ready
             && self.error.is_none()
             && !self.pending.contains(&offset)
             && !self.pages.iter().any(|page| page.offset == offset)
-            && self.workers.query_scoped(
+            && self.workers.query_ordered(
                 self.generation,
                 self.library_view.query.clone(),
                 self.libraries.scope(),
+                self.library_view.order,
                 offset,
             )
         {
@@ -424,6 +453,15 @@ impl Browser {
         }
         while let Some(event) = self.workers.try_event() {
             match event {
+                Event::Positions { generation, result } => {
+                    if let Some(index) = self
+                        .library_view
+                        .selection
+                        .positions_resolved(generation, result)
+                    {
+                        self.request_page(index / PAGE_SIZE * PAGE_SIZE);
+                    }
+                }
                 Event::Selection { generation, result } => {
                     self.library_view.selection.resolved(generation, result)
                 }
@@ -812,6 +850,7 @@ impl Browser {
                     .weak(),
             );
         }
+        self.request_list_positions();
         if !self.ready {
             ui.label(if self.error.is_some() {
                 "Catalog unavailable."
@@ -861,7 +900,11 @@ impl Browser {
         self.library_view
             .selection
             .feedback(ui, self.library_view.total);
-        table_heading(ui);
+        if table_heading(ui, &mut self.library_view.order) {
+            self.reorder_list();
+            selection::focus(ui, focus_id);
+            return;
+        }
         let scroll = self
             .library_view
             .selection
@@ -954,12 +997,14 @@ impl Browser {
         }
         if let Some((sample, index, gesture)) = choice {
             self.marked_view = Sidebar::Libraries;
-            self.library_view.selection.choose(
+            if !self.library_view.selection.choose(
                 SoundKey::Library(sample.id),
                 index,
                 &sample.source,
                 gesture,
-            );
+            ) {
+                return;
+            }
             self.library_view
                 .selection
                 .remember(Reference::from(&sample));
@@ -999,10 +1044,11 @@ impl Browser {
             self.request_page(index / PAGE_SIZE * PAGE_SIZE);
         }
         if let Some(request) = self.library_view.selection.request()
-            && self.workers.selection(
+            && self.workers.selection_ordered(
                 request.generation,
                 self.library_view.query.clone(),
                 self.libraries.scope(),
+                self.library_view.order,
                 request.anchor,
                 request.target,
             )
