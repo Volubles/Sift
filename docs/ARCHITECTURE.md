@@ -20,10 +20,16 @@ disconnects channels, and joins workers without an event-queue deadlock.
 
 `desktop.rs` coordinates selection, worker events, and the window's panels.
 `desktop::preview` presents playback controls, the waveform, and selected-source
-details. `desktop::sound_table` owns the shared Library/Favorites table widgets
-and their click/drag interaction tests. Library, collection, and favorite view
+details. `desktop::sound_table` owns the shared Library/Favorites table widgets.
+Library, collection, and favorite view
 state remains in its respective desktop module. Presentation modules perform
 no database or file I/O; the existing workers retain those responsibilities.
+
+Verification sources and fixtures are maintained locally outside version control.
+The build script enables private unit modules when `tests/unit/` exists;
+their `include!` hooks retain access to the original module scope. Without that
+directory, source-only builds do not load those files. Runtime behavior and
+dependencies are independent of this compile-time verification configuration.
 
 The [live index](INDEXING.md) adds one native notification consumer, bounded
 coalescing, event-loss recovery, and OS thread-pool directory subscriptions.

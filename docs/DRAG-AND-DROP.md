@@ -109,10 +109,9 @@ byte destination contents, and verifies unchanged originals. Fixtures include
 spaces, Unicode, canonical extended locators, and a source path over 260
 characters. No private library is scanned and no recording is made.
 
-```powershell
-cargo test --locked --lib platform:: -- --test-threads=1
-cargo test --locked --lib shell_target_copies -- --ignored --test-threads=1
-```
+The native verification harness and generated fixtures are maintained privately
+and are not included in this source distribution. Their invocation is recorded
+with the local suite.
 
 This proves native file-data interoperability and actual Shell copying. It does
 not prove the full Sift mouse gesture into an Explorer window. Manual Explorer
@@ -126,9 +125,9 @@ free Clippy. The earlier CLI/core checkpoint passed 23 tests with default
 features disabled. Native tests include an actual owned HWND and an invalid
 window handle: both release decisions cancel before any target drop. The prior
 adapter-only configuration passed ten checks.
-The explicit Shell target test above passes separately. The default test command
-intentionally skips that Shell integration test and the existing real-audio-device
-test. A release build and native desktop capture with the new drag control pass;
+The explicit Shell target check passed separately. The local suite intentionally
+skips Shell/device checks unless explicitly requested. A release build and native
+desktop capture with the new drag control pass;
 the capture was visually inspected. These checks do not establish audible output
 or a successful interactive Explorer gesture.
 

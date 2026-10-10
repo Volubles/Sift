@@ -62,29 +62,7 @@ fn prefix_successor(prefix: &str) -> Option<String> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, sift_local_tests))]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn quotes_fts_operators_as_literal_text() {
-        assert_eq!(
-            SearchQuery::parse("door OR* \"metal\"").unwrap(),
-            SearchQuery::Substrings("\"door\" AND \"OR*\" AND \"\"\"metal\"\"\"".into())
-        );
-    }
-
-    #[test]
-    fn short_input_is_an_indexed_filename_prefix() {
-        assert_eq!(
-            SearchQuery::parse(" Do ").unwrap(),
-            SearchQuery::FilenamePrefix {
-                lower: "do".into(),
-                upper: "dp".into()
-            }
-        );
-        assert!(SearchQuery::parse("door a").is_err());
-        assert!(SearchQuery::parse(&"x".repeat(257)).is_err());
-        assert_eq!(SearchQuery::parse("  ").unwrap(), SearchQuery::All);
-    }
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/search.rs"));
 }

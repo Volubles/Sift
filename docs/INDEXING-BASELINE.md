@@ -12,7 +12,7 @@ representative sound-effects/codec distribution. No private library was scanned.
 
 ## Method
 
-The ignored `tests/indexing_performance.rs` harness creates fixtures below
+The private local indexing harness creates fixtures below
 `.local/indexing-perf`, indexes them, repeats unchanged inventories three times,
 starts the actual Windows watcher/index workers, then measures 20 individual
 additions and one ten-file burst. Latency runs from file creation start to the
@@ -62,21 +62,18 @@ the full Sift idle CPU/RAM qualification: no renderer, waveform/audio cache,
 GPU, or other running Sift process was included. CPU counter resolution and
 the shorter sampled window limit the claim.
 
-## Reproduce
+## Reproduction conditions
 
 Archive a verified preceding release executable under the comparison name above,
-or omit it to run the new implementation alone. Then run:
+or omit it to measure the new implementation alone. The harness, fixtures, and
+invocation instructions are maintained with the private local suite and are not
+included in this source distribution. The method above specifies the generated
+file population, warm/cold inventory conditions, settling interval, repetitions,
+and completion criteria used for these results.
 
-```powershell
-cargo test --locked --release --test indexing_performance -- --ignored --test-threads=1 --nocapture
-```
-
-Set `SIFT_INDEX_BENCH_REPORT` to a fresh output path for the idle-phase marker and
-latency summary; the harness refuses to overwrite it. While it runs, sample
-that process's private bytes, working set, and CPU time. `SIFT_INDEX_BENCH_IMPORT_ONLY`
-restricts the run to fixture creation and the initial build. Fixtures use an
-owned temporary directory inside the approved workspace and are removed when
-the test finishes.
+Resource sampling covers the measured process's private bytes, working set, and
+CPU time during the marked idle interval. Fixtures use an owned temporary
+directory inside the approved workspace and are removed when measurement ends.
 
 Raw comparison output and process samples remain ignored under
 `.local/indexing-perf/`. NAS/external drives, notification-loss storms, long

@@ -1250,25 +1250,10 @@ fn external_drag_requested(input: &egui::InputState) -> bool {
                 .any(|event| matches!(event, egui::Event::PointerGone)))
 }
 
-#[cfg(test)]
+#[cfg(all(test, sift_local_tests))]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn scrolling_back_retains_the_newly_requested_page_and_bounds_the_cache() {
-        let mut pages = VecDeque::new();
-        for offset in [0, 128, 256, 384, 1024, 0] {
-            insert_page(
-                &mut pages,
-                SearchPage {
-                    total: 100_000,
-                    offset,
-                    rows: vec![],
-                },
-            );
-        }
-        assert_eq!(pages.len(), 4);
-        assert_eq!(pages.back().unwrap().offset, 0);
-        assert!(pages.iter().any(|page| page.offset == 0));
-    }
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/desktop.rs"
+    ));
 }

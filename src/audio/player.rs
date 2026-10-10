@@ -498,36 +498,10 @@ fn send_error(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, sift_local_tests))]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_controls_do_not_change_the_active_generation() {
-        let player = Player::start(|| {}).unwrap();
-        let generation = player.generation();
-        assert!(player.play(PathBuf::from("unused.wav"), f64::NAN).is_err());
-        assert!(player.volume(f32::NAN).is_err());
-        assert!(player.volume(2.0).is_err());
-        assert_eq!(player.generation(), generation);
-        assert_eq!(player.snapshot().phase, transport::IDLE);
-    }
-
-    #[test]
-    fn missing_source_fails_before_opening_an_output_device() {
-        let temporary = tempfile::tempdir().unwrap();
-        let player = Player::start(|| {}).unwrap();
-        player
-            .play(temporary.path().join("missing.wav"), 0.0)
-            .unwrap();
-        let message = player
-            .messages
-            .as_ref()
-            .unwrap()
-            .recv_timeout(Duration::from_secs(3))
-            .unwrap();
-        assert!(message.error.is_some());
-        assert!(message.output.is_none());
-        assert_eq!(message.generation, player.generation());
-    }
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/audio/player.rs"
+    ));
 }

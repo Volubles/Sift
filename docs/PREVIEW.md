@@ -30,6 +30,9 @@ initial selection only prepares a waveform and does not open an audio device.
 
 ## Verification
 
+The checks below were run with the private local verification suite and fixtures.
+Those sources are not included in this source distribution.
+
 - 26 default-feature tests passed, 23 headless tests passed, and Clippy with
   warnings denied and formatting checks passed.
 - An explicitly run hardware test switches sources and starts a two-minute PCM
@@ -52,19 +55,16 @@ initial selection only prepares a waveform and does not open an audio device.
 Raw audio, catalogs, screenshots, and logs are ignored scratch data. No private
 sample collection was scanned and no microphone or system loopback was recorded.
 
-## Reproduce targeted checks
+## Output diagnostics
 
 ```powershell
-cargo test --locked
-cargo test --locked --no-default-features
-cargo test --locked --test preview_device -- --ignored --test-threads=1
-cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- audio-check PATH_TO_GENERATED_AUDIO --exercise
 ```
 
-The hardware test uses very low-volume disposable audio. The audio-check command
-is intended for short test files; it times out after ten seconds. Neither command
-proves compatibility with every device/codec variant.
+The local hardware suite uses very low-volume disposable audio. Its invocation
+is maintained with the private fixtures. The included audio-check command is
+intended for short files and times out after ten seconds. Neither check proves
+compatibility with every device/codec variant.
 
 Projects, tags, export, native outgoing dragging, incremental indexing, and
 similarity remain separate future checkpoints.

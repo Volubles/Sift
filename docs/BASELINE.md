@@ -83,13 +83,16 @@ the storage checkpoint plus the dirty desktop integration tree. GPU memory,
 large saved collections, active dragging, and concurrent playback were not
 resource-qualified. Raw results remain ignored under `benchmarks/results/`.
 
-## Reproduce
+## Reproduction conditions
 
 ```powershell
 cargo build --release --locked
-.\scripts\measure-idle.ps1 -Executable .\target\release\sift.exe -Database PATH_TO_SYNTHETIC_CATALOG -Output .\benchmarks\results\idle.json -Seconds 60 -Renderer glow
 ```
 
-The script starts and closes only its own test process, refuses existing report
-files, and preserves the catalog/source files. Include GPU memory, interactive
-latency, repeated starts, and a representative real library in future reports.
+The measurement script and synthetic catalog are maintained privately. Its
+invocation is recorded with the local verification suite and is not included
+in this source distribution. It starts/closes only its own process, refuses
+existing reports, and preserves catalog/source files. The method above records
+sampling intervals, startup/settling conditions, CPU normalization, and activity
+limitations. Include GPU memory, interactive latency, repeated starts, and a
+representative real library in future reports.

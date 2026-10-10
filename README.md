@@ -137,13 +137,14 @@ separate owners; background queues and caches are bounded. See
 
 ```powershell
 cargo fmt --all -- --check
-cargo test --locked
+cargo check --locked
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-Device and Shell integration checks are explicit opt-in tests; see the linked
-documentation for their fixtures and remaining manual checks. Private libraries,
-databases, exports, build output, and working notes stay outside version control.
+Automated tests, fixtures, and measurement helpers are maintained privately and
+are not included in this source distribution. See the linked documentation for
+recorded verification and remaining manual checks. Private libraries, databases,
+exports, build output, and working notes stay outside version control.
 
 <details>
 <summary>Command-line indexing and search</summary>

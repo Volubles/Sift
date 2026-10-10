@@ -409,59 +409,10 @@ impl Engine {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, sift_local_tests))]
 mod tests {
-    use super::*;
-    #[test]
-    fn changes_coalesce_with_quiet_and_maximum_burst_deadlines() {
-        let now = Instant::now();
-        let root = PathBuf::from("root");
-        let path = root.join("file.wav");
-        let mut pending = Pending::default();
-        pending.path(root.clone(), path.clone(), now);
-        pending.path(root.clone(), path.clone(), now + Duration::from_millis(150));
-        assert!(pending.take(now + Duration::from_millis(200)).is_none());
-        assert_eq!(
-            pending
-                .take(now + Duration::from_millis(351))
-                .unwrap()
-                .paths,
-            vec![(root.clone(), path.clone())]
-        );
-        pending.path(root.clone(), path.clone(), now);
-        for offset in [100, 300, 600, 950] {
-            pending.path(
-                root.clone(),
-                path.clone(),
-                now + Duration::from_millis(offset),
-            );
-        }
-        assert_eq!(pending.deadline(), Some(now + MAX_BURST));
-    }
-    #[test]
-    fn overflow_promotes_a_root_to_one_bounded_reconciliation() {
-        let now = Instant::now();
-        let root = PathBuf::from("root");
-        let mut pending = Pending::default();
-        for index in 0..5000 {
-            pending.path(root.clone(), root.join(format!("file{index}.wav")), now);
-        }
-        assert!(pending.paths.is_empty());
-        assert_eq!(pending.roots.len(), 1);
-        assert_eq!(pending.bytes, 0);
-        assert_eq!(pending.take(now + QUIET).unwrap().roots, vec![root]);
-    }
-    #[test]
-    fn overlapping_roots_are_watched_once_without_matching_sibling_names() {
-        let root = PathBuf::from("root");
-        assert_eq!(
-            coalesce_roots(vec![
-                root.join("a"),
-                root.clone(),
-                root.clone(),
-                PathBuf::from("root-other")
-            ]),
-            vec![root, PathBuf::from("root-other")]
-        );
-    }
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/watch/mod.rs"
+    ));
 }

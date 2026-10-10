@@ -40,23 +40,10 @@ pub fn decode(bytes: Vec<u8>) -> Result<PathBuf> {
     Ok(PathBuf::from(OsString::from_vec(bytes)))
 }
 
-#[cfg(test)]
+#[cfg(all(test, sift_local_tests))]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn paths_round_trip_without_using_display_strings() {
-        let path = PathBuf::from("sounds/Forest_雨.wav");
-        assert_eq!(decode(encode(&path)).unwrap(), path);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unpaired_utf16_surrogate_round_trips() {
-        use std::ffi::OsString;
-        use std::os::windows::ffi::OsStringExt;
-        let path = PathBuf::from(OsString::from_wide(&[0x61, 0xd800, 0x62]));
-        assert_eq!(decode(encode(&path)).unwrap(), path);
-        assert!(decode(vec![1]).is_err());
-    }
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/path_codec.rs"
+    ));
 }

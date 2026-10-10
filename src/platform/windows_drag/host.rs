@@ -41,7 +41,7 @@ struct HostState {
     active: Cell<bool>,
     results: SyncSender<Outcome>,
     wake: Wake,
-    #[cfg(test)]
+    #[cfg(all(test, sift_local_tests))]
     callback_thread: Cell<Option<std::thread::ThreadId>>,
 }
 
@@ -93,7 +93,7 @@ impl DragHost {
             active: Cell::new(false),
             results: sender,
             wake,
-            #[cfg(test)]
+            #[cfg(all(test, sift_local_tests))]
             callback_thread: Cell::new(None),
         });
         let host = Self {
@@ -209,7 +209,7 @@ unsafe extern "system" fn drag_host_proc(
         return LRESULT(0);
     };
     state.active.set(true);
-    #[cfg(test)]
+    #[cfg(all(test, sift_local_tests))]
     state.callback_thread.set(Some(std::thread::current().id()));
     // No Rust panic may unwind through a Win32 callback. OLE pumps normal window
     // messages now that the application/event-handler borrow has ended.
@@ -230,64 +230,10 @@ unsafe extern "system" fn drag_host_proc(
     LRESULT(0)
 }
 
-#[cfg(test)]
+#[cfg(all(test, sift_local_tests))]
 mod tests {
-    use super::super::drop_bytes;
-    use super::*;
-    use crate::platform::DragWorker;
-    use std::time::Duration;
-    use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW};
-
-    #[test]
-    fn releases_over_owned_windows_or_no_window_cancel_before_a_drop() {
-        let host = DragHost::new(Arc::new(|| {})).unwrap();
-        assert_eq!(
-            super::super::release_over_window(host.window),
-            windows::Win32::Foundation::DRAGDROP_S_CANCEL
-        );
-        assert_eq!(
-            super::super::release_over_window(HWND::default()),
-            windows::Win32::Foundation::DRAGDROP_S_CANCEL
-        );
-    }
-
-    #[test]
-    fn native_start_is_deferred_to_the_owner_queue_and_cancelled_jobs_clear_busy_state() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("source.wav");
-        std::fs::write(&path, b"unchanged source").unwrap();
-        let owner = std::thread::current().id();
-        let (wake, ready) = mpsc::sync_channel(2);
-        let mut worker = DragWorker::start_with(
-            move || wake.send(()).unwrap(),
-            |sources, _| drop_bytes(sources),
-        )
-        .unwrap();
-        worker.request(vec![path.clone()]).unwrap();
-        ready.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert!(worker.poll().is_none());
-        assert!(worker.busy());
-        assert!(worker.native_started);
-        let host = worker.native.as_ref().unwrap();
-        assert_eq!(host.state.callback_thread.get(), None);
-        let window = host.window;
-        // No native call occurs while the UI/coordinator is borrowed. Cancelling
-        // before the queued message runs never captures the user's mouse.
-        worker.cancel();
-        let mut message = MSG::default();
-        assert!(
-            unsafe { PeekMessageW(&mut message, Some(window), RUN_DRAG, RUN_DRAG, PM_REMOVE) }
-                .as_bool()
-        );
-        unsafe { DispatchMessageW(&message) };
-        assert_eq!(
-            worker.native.as_ref().unwrap().state.callback_thread.get(),
-            Some(owner)
-        );
-        ready.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert_eq!(worker.poll().unwrap().unwrap(), DragOutcome::Cancelled);
-        assert!(!worker.busy());
-        assert!(!worker.native_active());
-        assert_eq!(std::fs::read(path).unwrap(), b"unchanged source");
-    }
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/platform/windows_drag/host.rs"
+    ));
 }

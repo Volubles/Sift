@@ -57,6 +57,10 @@ use approved sample files; do not scan private folders by habit.
 - Preserve reproducible commands and methods. Private raw data belongs in
   ignored `benchmarks/results/`; a sanitized summary can be committed.
 
+Measurement helpers and automated verification sources are maintained privately.
+Published reports retain the fixture definitions, methods, results, and limits;
+local harness invocation instructions stay with that private suite.
+
 Split scanning throughput into enumeration, metadata, decoding, waveforms,
 hashing, and analysis. Files per second without content details are not
 comparable. Bound background CPU and prioritize interaction/playback.

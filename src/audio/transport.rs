@@ -148,47 +148,10 @@ impl Render {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, sift_local_tests))]
 mod tests {
-    use super::*;
-    #[test]
-    fn stale_audio_is_discarded_without_losing_paused_current_audio() {
-        let shared = Arc::new(Shared::default());
-        let (mut producer, mut render) = channel(shared.clone(), 2);
-        producer
-            .push(Frame {
-                generation: 1,
-                position: 0,
-                samples: [1.0, 1.0],
-            })
-            .unwrap();
-        producer
-            .push(Frame {
-                generation: 2,
-                position: 42,
-                samples: [0.5, -0.5],
-            })
-            .unwrap();
-        shared.generation.store(2, Ordering::Release);
-        let mut output = [9.0; 4];
-        render.fill(&mut output);
-        assert_eq!(output, [0.0; 4]);
-        shared.paused.store(false, Ordering::Relaxed);
-        render.fill(&mut output);
-        assert_eq!(output, [0.2, -0.2, 0.0, 0.0]);
-        assert_eq!(shared.position.load(Ordering::Relaxed), 43);
-    }
-
-    #[test]
-    fn silence_and_end_of_stream_do_not_advance_the_playhead() {
-        let shared = Arc::new(Shared::default());
-        let (_, mut render) = channel(shared.clone(), 2);
-        shared.paused.store(false, Ordering::Relaxed);
-        shared.eof.store(1, Ordering::Release);
-        let mut output = [1.0; 16];
-        render.fill(&mut output);
-        assert_eq!(output, [0.0; 16]);
-        assert_eq!(shared.phase.load(Ordering::Relaxed), ENDED);
-        assert_eq!(shared.position.load(Ordering::Relaxed), 0);
-    }
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/audio/transport.rs"
+    ));
 }
