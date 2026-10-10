@@ -65,6 +65,16 @@ all four SHA-256 source hashes were unchanged afterward.
 
 ## Next proposed task
 
+Incremental indexing is implemented in catalog schema 3. Unchanged inventories
+skip audio probes and persistent sample/FTS writes, while completed inventories
+remove missing cache rows and empty derived folders. Cancelled/incomplete scans
+and offline roots retain previous data. Native path updates reconcile a changed
+file or subtree and force probing for timestamp-preserving writes. Non-reused
+sample IDs prevent a deleted selection from attaching to a new file; saved
+collections remain independent. Generated fixture tests cover these rules.
+The next checkpoint is live Windows watching, desktop refresh, and measured
+100,000-file behavior. See [Indexing](INDEXING.md).
+
 Named libraries and the folder browser are implemented. The drive/grid activity
 rail switches Libraries and Collections while preserving the current bank,
 folder, and query. Banks support create/rename/remove and multiple source folders;

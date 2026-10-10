@@ -15,6 +15,7 @@ fn indexed(source: std::path::PathBuf) -> IndexedFile {
         size_bytes: 44,
         audio: AudioMetadata::default(),
         metadata_error: None,
+        stamp: None,
     }
 }
 
@@ -277,7 +278,7 @@ fn version_one_migration_deduplicates_and_preserves_fts_and_native_tree() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
 }
 

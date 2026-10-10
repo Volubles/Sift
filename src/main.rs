@@ -98,8 +98,14 @@ fn run(arguments: Arguments) -> sift::Result<()> {
                 .map_err(|error| sift::Error::Configuration(error.to_string()))?;
             let report = library::scan(&folder, &mut catalog, &Cancellation::default(), |_| {})?;
             println!(
-                "Indexed {} files; {} metadata/traversal errors; {} links skipped",
-                report.indexed, report.errors, report.skipped_links
+                "Checked {} files; {} updated; {} unchanged; {} removed; {} deferred; {} issues; {} links skipped",
+                report.visited,
+                report.indexed,
+                report.unchanged,
+                report.removed,
+                report.deferred,
+                report.errors,
+                report.skipped_links
             );
             for issue in report.issues {
                 eprintln!(

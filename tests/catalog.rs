@@ -33,6 +33,7 @@ fn indexed_file(name: &str) -> IndexedFile {
         size_bytes: 44,
         audio: AudioMetadata::default(),
         metadata_error: None,
+        stamp: None,
     }
 }
 

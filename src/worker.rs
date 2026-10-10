@@ -472,6 +472,7 @@ mod tests {
                     size_bytes: 44,
                     audio: AudioMetadata::default(),
                     metadata_error: None,
+                    stamp: None,
                 }
             })
             .collect();
@@ -574,6 +575,7 @@ mod tests {
             size_bytes: 44,
             audio: AudioMetadata::default(),
             metadata_error: None,
+            stamp: None,
         })
         .collect();
         catalog.upsert_batch(id, &files).unwrap();

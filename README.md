@@ -84,8 +84,9 @@ use bounded queues and wake the UI on results; there is no idle polling timer.
 The prototype uses egui/eframe 0.36.2, the Glow renderer, and RFD 0.17.2 for the
 Windows folder dialog. See [checkpoint verification](docs/CHECKPOINT.md).
 
-Current scans refresh metadata but do not reconcile deleted/moved files or skip
-unchanged files yet. Collection folders/reordering, tags, multi-selection, and application-managed
+Scans skip unchanged metadata and reconcile missing index rows only after a
+complete inventory; cancellation and inaccessible sources preserve cached data.
+See [Indexing](docs/INDEXING.md). Collection folders/reordering, tags, multi-selection, and application-managed
 folder export are not implemented. Do not treat indexed metadata as verified
 decoder/playback support.
 

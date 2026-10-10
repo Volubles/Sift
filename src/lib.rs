@@ -22,7 +22,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Catalog operation failed: {0}")]
     Database(#[from] rusqlite::Error),
-    #[error("Unsupported catalog schema {0}; this application supports schema 2")]
+    #[error("Unsupported catalog schema {0}; this application supports schema 3")]
     UnsupportedSchema(i64),
     #[error("Invalid catalog path encoding")]
     InvalidPath,

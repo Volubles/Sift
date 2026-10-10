@@ -672,19 +672,21 @@ impl Browser {
         }
         if let Some(scan) = &self.scan {
             ui.label(format!(
-                "Indexing: {} files saved, {} issues",
-                scan.indexed, scan.errors
+                "Indexing: {} checked, {} updated, {} unchanged, {} issues",
+                scan.visited, scan.indexed, scan.unchanged, scan.errors
             ));
         }
         if let Some(report) = &self.scan_summary {
             let outcome = if report.cancelled {
                 "Scan cancelled"
+            } else if report.incomplete || report.deferred > 0 {
+                "Scan incomplete"
             } else {
                 "Scan finished"
             };
             ui.label(format!(
-                "{outcome}: {} files saved, {} issues, {} links skipped",
-                report.indexed, report.errors, report.skipped_links
+                "{outcome}: {} updated, {} unchanged, {} removed, {} deferred, {} issues",
+                report.indexed, report.unchanged, report.removed, report.deferred, report.errors
             ));
             if !report.issues.is_empty() {
                 egui::CollapsingHeader::new("Scan issues").show(ui, |ui| {

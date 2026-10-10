@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, params, params_from_iter, types::Value};
 
-use crate::library::AudioMetadata;
+use crate::library::{AudioMetadata, FileStamp, PROBE_VERSION};
 use crate::search::{PAGE_SIZE, SearchQuery};
 use crate::{Error, Result, path_codec};
 
@@ -62,6 +62,7 @@ pub struct IndexedFile {
     pub size_bytes: u64,
     pub audio: AudioMetadata,
     pub metadata_error: Option<String>,
+    pub stamp: Option<FileStamp>,
 }
 
 pub struct Catalog {
@@ -80,7 +81,7 @@ impl Catalog {
         connection.busy_timeout(Duration::from_secs(2))?;
         connection.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(Error::UnsupportedSchema(version));
         }
         if version == 0 {
@@ -108,7 +109,7 @@ impl Catalog {
                     break;
                 }
                 for (id, source, root) in files {
-                    record_folders(
+                    record_legacy_folders(
                         &transaction,
                         &path_codec::decode(source)?,
                         &path_codec::decode(root)?,
@@ -124,6 +125,31 @@ impl Catalog {
             )?;
             transaction.commit()?;
         }
+        if version <= 2 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(include_str!("migration-3.sql"))?;
+            let mut after = 0i64;
+            loop {
+                let folders: Vec<(i64, Vec<u8>)> = {
+                    let mut statement = transaction.prepare("SELECT rowid,source_path FROM folders WHERE rowid>?1 ORDER BY rowid LIMIT 128")?;
+                    statement
+                        .query_map([after], |row| Ok((row.get(0)?, row.get(1)?)))?
+                        .collect::<std::result::Result<_, _>>()?
+                };
+                if folders.is_empty() {
+                    break;
+                }
+                for (id, bytes) in folders {
+                    let (lower, upper) = directory_range(&path_codec::decode(bytes)?)?;
+                    transaction.execute(
+                        "UPDATE folders SET prefix_lower=?1,prefix_upper=?2 WHERE rowid=?3",
+                        params![lower, upper, id],
+                    )?;
+                    after = id;
+                }
+            }
+            transaction.commit()?;
+        }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         Ok(Self { connection })
     }
@@ -132,7 +158,7 @@ impl Catalog {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_secs(2))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != 2 {
+        if version != 3 {
             return Err(Error::UnsupportedSchema(version));
         }
         Ok(Self { connection })
@@ -151,8 +177,12 @@ impl Catalog {
         )?)
     }
 
-    pub fn upsert_batch(&mut self, root_id: i64, files: &[IndexedFile]) -> Result<()> {
+    pub fn upsert_batch(&mut self, root_id: i64, files: &[IndexedFile]) -> Result<usize> {
+        if files.is_empty() {
+            return Ok(0);
+        }
         let transaction = self.connection.transaction()?;
+        let mut written = 0;
         let root = path_codec::decode(transaction.query_row(
             "SELECT source_path FROM library_roots WHERE id=?1",
             [root_id],
@@ -160,19 +190,27 @@ impl Catalog {
         )?)?;
         {
             let mut statement = transaction.prepare_cached(
-                "INSERT INTO samples(root_id, source_path, name, name_key, path, format, size_bytes, duration_seconds, sample_rate, channels, bit_depth, metadata_error)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                "INSERT INTO samples(root_id, source_path, name, name_key, path, format, size_bytes, duration_seconds, sample_rate, channels, bit_depth, metadata_error,modified_ns,created_ns,probe_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,?13,?14,?15)
                  ON CONFLICT(source_path) DO UPDATE SET root_id=excluded.root_id,
                    name=excluded.name, name_key=excluded.name_key, path=excluded.path,
                    format=excluded.format, size_bytes=excluded.size_bytes,
                    duration_seconds=excluded.duration_seconds, sample_rate=excluded.sample_rate,
                    channels=excluded.channels, bit_depth=excluded.bit_depth,
-                   metadata_error=excluded.metadata_error",
+                   metadata_error=excluded.metadata_error,modified_ns=excluded.modified_ns,
+                   created_ns=excluded.created_ns,probe_version=excluded.probe_version
+                 WHERE samples.root_id IS NOT excluded.root_id OR samples.name IS NOT excluded.name
+                   OR samples.path IS NOT excluded.path OR samples.format IS NOT excluded.format
+                   OR samples.size_bytes IS NOT excluded.size_bytes OR samples.duration_seconds IS NOT excluded.duration_seconds
+                   OR samples.sample_rate IS NOT excluded.sample_rate OR samples.channels IS NOT excluded.channels
+                   OR samples.bit_depth IS NOT excluded.bit_depth OR samples.metadata_error IS NOT excluded.metadata_error
+                   OR samples.modified_ns IS NOT excluded.modified_ns OR samples.created_ns IS NOT excluded.created_ns
+                   OR samples.probe_version IS NOT excluded.probe_version",
             )?;
             for file in files {
                 record_folders(&transaction, &file.source, &root)?;
                 let size = i64::try_from(file.size_bytes).map_err(|_| Error::OutOfRange)?;
-                statement.execute(params![
+                written += statement.execute(params![
                     root_id,
                     path_codec::encode(&file.source),
                     file.name,
@@ -184,12 +222,19 @@ impl Catalog {
                     file.audio.sample_rate,
                     file.audio.channels,
                     file.audio.bit_depth,
-                    file.metadata_error
+                    file.metadata_error,
+                    file.stamp.as_ref().and_then(|stamp| stamp.modified_ns),
+                    file.stamp.as_ref().and_then(|stamp| stamp.created_ns),
+                    if file.stamp.is_some() {
+                        PROBE_VERSION
+                    } else {
+                        0
+                    }
                 ])?;
             }
         }
         transaction.commit()?;
-        Ok(())
+        Ok(written)
     }
 
     pub fn search(&mut self, query: &SearchQuery, offset: usize) -> Result<SearchPage> {
@@ -277,6 +322,92 @@ impl Catalog {
         Ok(roots)
     }
 
+    pub(crate) fn unchanged(&self, source: &Path, stamp: &FileStamp) -> Result<bool> {
+        if stamp.modified_ns.is_none() {
+            return Ok(false);
+        }
+        let exists: bool = self
+            .connection
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM samples WHERE source_path=?1 AND size_bytes=?2
+             AND modified_ns=?3 AND created_ns IS ?4 AND probe_version=?5)",
+            )?
+            .query_row(
+                params![
+                    path_codec::encode(source),
+                    i64::try_from(stamp.size_bytes).map_err(|_| Error::OutOfRange)?,
+                    stamp.modified_ns,
+                    stamp.created_ns,
+                    PROBE_VERSION
+                ],
+                |row| row.get(0),
+            )?;
+        Ok(exists)
+    }
+
+    pub(crate) fn begin_inventory(&self) -> Result<()> {
+        self.connection.execute_batch(
+            "PRAGMA temp_store=FILE;
+             CREATE TEMP TABLE IF NOT EXISTS scan_seen(source_path BLOB PRIMARY KEY) STRICT;
+             PRAGMA temp.cache_size=-1024;
+             DELETE FROM scan_seen;",
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn record_seen(&mut self, paths: &[PathBuf]) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        {
+            let mut statement = transaction
+                .prepare_cached("INSERT OR IGNORE INTO scan_seen(source_path) VALUES(?1)")?;
+            for path in paths {
+                statement.execute([path_codec::encode(path)])?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn finish_inventory(&mut self, root: &Path) -> Result<usize> {
+        let transaction = self.connection.transaction()?;
+        let (lower, upper) = directory_range(root)?;
+        let removed = transaction.execute(
+            "DELETE FROM samples WHERE source_path>=?1 AND source_path<?2
+             AND NOT EXISTS(SELECT 1 FROM scan_seen WHERE scan_seen.source_path=samples.source_path)",params![lower,upper],
+        )?;
+        transaction.execute(
+            "DELETE FROM folders WHERE (source_path=?1 OR (source_path>=?2 AND source_path<?3))
+             AND NOT EXISTS(SELECT 1 FROM samples WHERE samples.source_path>=folders.prefix_lower AND samples.source_path<folders.prefix_upper)",
+            params![path_codec::encode(root),lower,upper],
+        )?;
+        transaction.execute("DELETE FROM scan_seen", [])?;
+        transaction.commit()?;
+        Ok(removed)
+    }
+
+    pub(crate) fn remove_cached_path(&mut self, root: &Path, path: &Path) -> Result<usize> {
+        let transaction = self.connection.transaction()?;
+        let (lower, upper) = directory_range(path)?;
+        let removed = transaction.execute(
+            "DELETE FROM samples WHERE source_path=?1 OR (source_path>=?2 AND source_path<?3)",
+            params![path_codec::encode(path), lower, upper],
+        )?;
+        transaction.execute(
+            "DELETE FROM folders WHERE source_path=?1 OR (source_path>=?2 AND source_path<?3)",
+            params![path_codec::encode(path), lower, upper],
+        )?;
+        for ancestor in path
+            .ancestors()
+            .skip(1)
+            .take_while(|ancestor| ancestor.starts_with(root))
+        {
+            let (lower, upper) = directory_range(ancestor)?;
+            transaction.execute("DELETE FROM folders WHERE source_path=?1 AND NOT EXISTS(SELECT 1 FROM samples WHERE source_path>=?2 AND source_path<?3)",params![path_codec::encode(ancestor),lower,upper])?;
+        }
+        transaction.commit()?;
+        Ok(removed)
+    }
+
     pub fn count_scope(&self, scope: &Scope) -> Result<usize> {
         let mut values = Vec::new();
         let condition = scope_condition(scope, &mut values)?;
@@ -332,12 +463,30 @@ fn record_folders(connection: &Connection, source: &Path, root: &Path) -> Result
             .file_name()
             .unwrap_or(folder.as_os_str())
             .to_string_lossy();
-        connection.execute("INSERT INTO folders(source_path, parent_path, name, name_key) VALUES(?1,?2,?3,?4) ON CONFLICT DO NOTHING",
-            params![path_codec::encode(folder), folder.parent().map(path_codec::encode), name, name.to_lowercase()])?;
+        let (lower, upper) = directory_range(folder)?;
+        connection.prepare_cached("INSERT INTO folders(source_path,parent_path,name,name_key,prefix_lower,prefix_upper) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING")?.execute(params![path_codec::encode(folder),folder.parent().map(path_codec::encode),name,name.to_lowercase(),lower,upper])?;
         if folder == root {
             break;
         }
         current = folder.parent();
+    }
+    Ok(())
+}
+
+fn record_legacy_folders(connection: &Connection, source: &Path, root: &Path) -> Result<()> {
+    for folder in source
+        .ancestors()
+        .skip(1)
+        .take_while(|folder| folder.starts_with(root))
+    {
+        let name = folder
+            .file_name()
+            .unwrap_or(folder.as_os_str())
+            .to_string_lossy();
+        connection.execute("INSERT INTO folders(source_path,parent_path,name,name_key) VALUES(?1,?2,?3,?4) ON CONFLICT DO NOTHING",params![path_codec::encode(folder),folder.parent().map(path_codec::encode),name,name.to_lowercase()])?;
+        if folder == root {
+            break;
+        }
     }
     Ok(())
 }
@@ -357,15 +506,7 @@ fn scope_condition(scope: &Scope, values: &mut Vec<Value>) -> Result<String> {
         }) {
             continue;
         }
-        let lower = path_codec::encode(&folder.join(""));
-        let mut upper = lower.clone();
-        while upper.last() == Some(&255) {
-            upper.pop();
-        }
-        let Some(last) = upper.last_mut() else {
-            return Err(Error::InvalidPath);
-        };
-        *last += 1;
+        let (lower, upper) = directory_range(folder)?;
         let start = values.len() + 1;
         values.extend([Value::Blob(lower), Value::Blob(upper)]);
         ranges.push(format!(
@@ -378,4 +519,17 @@ fn scope_condition(scope: &Scope, values: &mut Vec<Value>) -> Result<String> {
     } else {
         format!("({})", ranges.join(") OR ("))
     })
+}
+
+fn directory_range(folder: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
+    let lower = path_codec::encode(&folder.join(""));
+    let mut upper = lower.clone();
+    while upper.last() == Some(&255) {
+        upper.pop();
+    }
+    let Some(last) = upper.last_mut() else {
+        return Err(Error::InvalidPath);
+    };
+    *last += 1;
+    Ok((lower, upper))
 }

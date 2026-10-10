@@ -31,13 +31,15 @@ egui/winit event callback returns; it does not run on a worker input queue or
 inside a borrowed application callback. Native references stay thread-local,
 and final results wake the UI through a bounded queue.
 
-Catalog schema 2 stores Windows paths as little-endian UTF-16 blobs, preserving
+Catalog schema 3 stores Windows paths as little-endian UTF-16 blobs, preserving
 unpaired surrogates; display text is separate. Locators are platform-specific.
-The first index is additive/updating, with stable IDs for unchanged locations.
+Incremental inventories skip unchanged metadata and reconcile missing paths
+only after complete enumeration. Sample IDs are non-reused within an index.
 Exact native locators are deduplicated across overlapping roots; folder filters
 use indexed native ranges. Named library registrations have independent durable
-storage, as described in [Libraries](LIBRARIES.md). Move/deletion reconciliation,
-alias identity, and incremental change detection remain later work.
+storage, as described in [Libraries](LIBRARIES.md). Native path updates and
+completed-inventory deletion reconciliation are described in [Indexing](INDEXING.md).
+Durable-source relinking and content/alias identity remain later work.
 Unknown metadata is nullable, and failed probes are
 stored explicitly. Parser reads are limited to 8 MiB per file.
 
