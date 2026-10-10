@@ -62,6 +62,17 @@ pub fn scan(
     cancellation: &Cancellation,
     mut progress: impl FnMut(&ScanReport),
 ) -> Result<ScanReport> {
+    let metadata = std::fs::symlink_metadata(root)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(Error::InvalidRoot);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(Error::InvalidRoot);
+        }
+    }
     let root = root.canonicalize()?;
     if !root.is_dir() {
         return Err(Error::InvalidRoot);

@@ -203,11 +203,30 @@ fn unknown_library_database_is_preserved() {
 }
 
 #[test]
+fn cli_registration_after_initial_import_is_idempotent_and_survives_restart() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("Audio");
+    fs::create_dir(&root).unwrap();
+    let path = temporary.path().join("libraries.sqlite");
+    let catalog = Catalog::open(&temporary.path().join("catalog.sqlite")).unwrap();
+    let mut store = Store::open(&path).unwrap();
+    store.import_legacy(&[]).unwrap();
+    store.register_folder_bank(&root).unwrap();
+    store.register_folder_bank(&root).unwrap();
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    let snapshot = store.snapshot(&catalog).unwrap();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].name, "Audio");
+    assert_eq!(snapshot[0].sources.len(), 1);
+}
+
+#[test]
 fn version_one_migration_deduplicates_and_preserves_fts_and_native_tree() {
     let temporary = tempfile::tempdir().unwrap();
     let path = temporary.path().join("catalog.sqlite");
     let root = temporary.path().join("sounds");
-    let source = root.join("nested").join("door.wav");
+    let source = root.join("nested").join("deep").join("door.wav");
     let mut connection = rusqlite::Connection::open(&path).unwrap();
     connection
         .execute_batch(include_str!("../src/catalog/schema.sql"))
@@ -234,9 +253,9 @@ fn version_one_migration_deduplicates_and_preserves_fts_and_native_tree() {
                 rusqlite::params![
                     id,
                     encode(&if id == 1 {
-                        root.clone()
+                        root.join("nested").join("deep")
                     } else {
-                        root.join("nested")
+                        root.clone()
                     })
                 ],
             )

@@ -10,7 +10,9 @@ the native window; Glow is now the default after the [release baseline](BASELINE
 and WGPU remains optional. RFD 0.17.2 supplies the Windows folder dialog. The index
 worker owns a writable connection and the search worker owns an independent
 read-only connection. Query generations reject stale results. The UI retains
-at most four 128-record pages; event/query/scan queues are bounded at 8/4/1.
+at most four 128-record pages; event/read/index-command queues are bounded at 8/4/4.
+The index thread also owns durable named libraries. Folder pages share the read
+worker, with their own generations and a bounded desktop tree cache.
 Workers block when idle and wake the UI on results. Shutdown cancels scanning,
 disconnects channels, and joins workers without an event-queue deadlock.
 

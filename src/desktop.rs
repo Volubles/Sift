@@ -22,6 +22,15 @@ use crate::worker::{Event, Workers};
 
 mod collections;
 use collections::{Action as CollectionAction, Collections};
+mod libraries;
+use libraries::{Action as LibraryAction, Libraries};
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Sidebar {
+    #[default]
+    Libraries,
+    Collections,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SoundKey {
@@ -106,6 +115,8 @@ struct Browser {
     player: Player,
     drags: DragWorker,
     collections: Collections,
+    libraries: Libraries,
+    sidebar: Sidebar,
     drag_error: Option<String>,
     waveform: Option<Arc<Waveform>>,
     wave_generation: u64,
@@ -155,6 +166,8 @@ impl Browser {
             player,
             drags,
             collections,
+            libraries: Libraries::default(),
+            sidebar: Sidebar::default(),
             drag_error: None,
             waveform: None,
             wave_generation: 0,
@@ -211,9 +224,12 @@ impl Browser {
             && self.error.is_none()
             && !self.pending.contains(&offset)
             && !self.pages.iter().any(|page| page.offset == offset)
-            && self
-                .workers
-                .query(self.generation, self.query.clone(), offset)
+            && self.workers.query_scoped(
+                self.generation,
+                self.query.clone(),
+                self.libraries.scope(),
+                offset,
+            )
         {
             self.pending.insert(offset);
         }
@@ -267,8 +283,21 @@ impl Browser {
                     self.ready = true;
                     self.request_page(0);
                     if let Some(folder) = self.folder.take() {
+                        self.libraries.add_initial_folder(&self.workers, folder);
+                    }
+                }
+                Event::Libraries(result) => {
+                    if self.libraries.snapshot(result) {
+                        self.reset_query();
+                    }
+                }
+                Event::LibraryEdited { token, result } => {
+                    if let Some(folder) = self.libraries.edited(&self.workers, token, result) {
                         self.begin_scan(folder);
                     }
+                }
+                Event::Folders { generation, result } => {
+                    self.libraries.folder_page(generation, result)
                 }
                 Event::Page { generation, result } if generation == self.generation => match result
                 {
@@ -576,26 +605,16 @@ impl Browser {
             ui.label(RichText::new("Your sounds, within reach.").weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.toggle_value(&mut self.show_details, "Details");
-                if ui
-                    .add_enabled(
-                        cfg!(windows) && self.ready && self.scan.is_none(),
-                        egui::Button::new("Add folder"),
-                    )
-                    .clicked()
-                {
-                    #[cfg(windows)]
-                    if let Some(folder) = rfd::FileDialog::new()
-                        .set_title("Choose a sample library")
-                        .pick_folder()
-                    {
-                        self.begin_scan(folder);
-                    }
-                }
                 if self.scan.is_some() && ui.button("Cancel scan").clicked() {
                     self.workers.cancel_scan();
                 }
             });
         });
+        ui.label(
+            RichText::new(format!("Browsing: {}", self.libraries.label()))
+                .small()
+                .color(Color32::from_rgb(135, 222, 194)),
+        );
         ui.add_space(12.0);
         let response = ui.add_sized(
             [ui.available_width(), 34.0],
@@ -780,8 +799,7 @@ impl Browser {
 
     fn list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.heading("Library");
-            ui.label(RichText::new("LOCAL LIBRARY").small().weak());
+            ui.heading("Sounds");
         });
         ui.separator();
         if DragWorker::supported() {
@@ -806,7 +824,9 @@ impl Browser {
             if !self.pending.is_empty() {
                 ui.label("Searching...");
             } else if self.query_text.is_empty() {
-                ui.label("Add a sample folder to get started. Source files stay in place.");
+                ui.label(
+                    "No indexed sounds in this view. Add or rescan a source folder in Libraries.",
+                );
             } else {
                 ui.label("No matching sounds.");
             }
@@ -871,6 +891,7 @@ impl Browser {
         };
         if self.ready
             && self.collections.settled()
+            && self.libraries.settled()
             && self.scan.is_none()
             && !self.wave_pending
             && !self.pages.is_empty()
@@ -931,6 +952,62 @@ fn sample_button(label: String, selected: bool) -> egui::Button<'static> {
     egui::Button::new(label)
         .selected(selected)
         .sense(egui::Sense::click_and_drag())
+}
+
+fn navigation_button(ui: &mut egui::Ui, mode: Sidebar, selected: bool) -> egui::Response {
+    let name = match mode {
+        Sidebar::Libraries => "Libraries",
+        Sidebar::Collections => "Collections",
+    };
+    let response = ui
+        .add_sized([32.0, 38.0], egui::Button::new("").selected(selected))
+        .on_hover_text(name);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, name)
+    });
+    let centre = response.rect.center();
+    let color = if selected {
+        Color32::from_rgb(135, 222, 194)
+    } else {
+        Color32::from_gray(155)
+    };
+    let painter = ui.painter();
+    match mode {
+        Sidebar::Libraries => {
+            let points = vec![
+                centre + egui::vec2(-7.0, -9.0),
+                centre + egui::vec2(7.0, -9.0),
+                centre + egui::vec2(10.0, 6.0),
+                centre + egui::vec2(-10.0, 6.0),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                color.gamma_multiply(0.25),
+                egui::Stroke::new(1.5, color),
+            ));
+            painter.line_segment(
+                [
+                    centre + egui::vec2(-9.0, 10.0),
+                    centre + egui::vec2(9.0, 10.0),
+                ],
+                (2.0, color),
+            );
+        }
+        Sidebar::Collections => {
+            for row in 0..3 {
+                for column in 0..3 {
+                    let min =
+                        centre + egui::vec2(-9.0 + column as f32 * 7.0, -9.0 + row as f32 * 7.0);
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(min, egui::vec2(5.0, 5.0)),
+                        0.0,
+                        color,
+                    );
+                }
+            }
+        }
+    }
+    response
 }
 
 fn table_heading(ui: &mut egui::Ui) {
@@ -1100,10 +1177,30 @@ impl eframe::App for Browser {
                 .weak(),
             );
         });
-        egui::Panel::left("collections")
+        egui::Panel::left("activity-rail")
+            .resizable(false)
+            .exact_size(44.0)
+            .show(ui, |ui| {
+                for mode in [Sidebar::Libraries, Sidebar::Collections] {
+                    if navigation_button(ui, mode, self.sidebar == mode).clicked() {
+                        self.sidebar = mode;
+                    }
+                }
+            });
+        egui::Panel::left("browser-sidebar")
             .resizable(true)
             .default_size(260.0)
             .show(ui, |ui| {
+                if self.sidebar == Sidebar::Libraries {
+                    if let Some(action) = self.libraries.ui(ui, &self.workers, self.scan.is_some())
+                    {
+                        match action {
+                            LibraryAction::ScopeChanged => self.reset_query(),
+                            LibraryAction::Scan(folder) => self.begin_scan(folder),
+                        }
+                    }
+                    return;
+                }
                 let selected_entry = match self.selected_key {
                     Some(SoundKey::Collection(id)) => Some(id),
                     _ => None,

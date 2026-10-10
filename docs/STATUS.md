@@ -65,13 +65,32 @@ all four SHA-256 source hashes were unchanged afterward.
 
 ## Next proposed task
 
-Named library storage and catalog schema 2 are implemented. Banks and source
-registrations survive index rebuilds; native folder ranges scope search without
-duplicate rows from overlapping roots. Transactional schema-1 migration and
-rollback, bounded folder pages, offline sources, one-time legacy import, and
-unchanged originals have automated coverage. 54 desktop tests pass, together
-with formatting and Clippy. See [Libraries](LIBRARIES.md). The activity rail,
-library sidebar, and desktop worker integration are the next checkpoint.
+Named libraries and the folder browser are implemented. The drive/grid activity
+rail switches Libraries and Collections while preserving the current bank,
+folder, and query. Banks support create/rename/remove and multiple source folders;
+folder clicks include descendants, and `All files` restores the bank scope.
+Source registration is saved before scanning; scan cancellation keeps it.
+Bank/source edits preserve original audio and independently saved collections.
+The existing index thread owns durable libraries; the read thread serves scoped
+search and folder pages with separate generations. The tree caches at most 32
+64-row pages and renders visible rows. No application thread or dependency was
+added. See [Libraries](LIBRARIES.md).
+
+Catalog schema 2 deduplicates exact native locators across overlapping roots and
+migrates previous metadata transactionally. The migration builds every original
+root hierarchy before removing duplicate rows. Durable registrations survive
+index rebuilds; offline sources stay visible. Native component scopes, paging,
+migration rollback, one-time legacy import, restart, failed-draft correction,
+form Enter behavior, stale responses, and unread-save shutdown have coverage.
+The default suite passes 60 tests; 38 headless tests, formatting, and Clippy
+also pass. Five generated WAV/FLAC/MP3/AIFF source hashes are unchanged after
+real indexing. A release Windows capture rendered two banks, the source tree,
+and the four-row selected bank; it was visually inspected before final painted
+arrow/row polish. The release executable is rebuilt. The Windows helper read
+controls but could not click an indexed element; Computer Use was stopped with
+physical Escape. Source dialogs, bank/folder mouse selection, mode switching,
+and Explorer gestures remain manual checks. CPU/RAM have not been qualified
+again for this checkpoint.
 
 The first release baseline found excessive private memory with WGPU; a
 controlled Glow comparison reduced it from about 477 to 134 MiB. Glow is now
@@ -148,10 +167,12 @@ with no measurable CPU-time increase over 30 seconds. Activity diagnostics and
 limits are recorded in [baseline](BASELINE.md); the longer run had substantial
 input and cannot qualify idle CPU.
 
-Verify collection mouse gestures and the revised Explorer handoff, then add
-virtual collection folders, ordering, and multi-selection. Keep incremental indexing,
-source reconciliation, broader device tests, and performance qualification
-explicit. Sift is still a prototype, not a finished sampler.
+Next concrete step: verify bank creation, multiple source folders, subtree
+selection, Collections switching, and the revised Explorer handoff on disposable
+fixtures. Then implement incremental indexing and deleted/moved source
+reconciliation. Virtual collection folders, ordering, multi-selection, broader
+device tests, and performance qualification remain later checkpoints.
+Sift is still a prototype, not a finished sampler.
 
 Choose major technical details from that evidence before introducing a full
 analysis pipeline, AI, or a large application framework.

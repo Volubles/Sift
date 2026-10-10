@@ -48,7 +48,7 @@ Use the document that matches the task:
 
 - Collection items are references. Tagging, collection changes, and export do not alter
   source names, contents, or locations. External drag-and-drop offers copying.
-- Separate durable collections/tags/favorites from rebuildable indexes and caches.
+- Separate durable libraries/collections/tags/favorites from rebuildable indexes and caches.
   Reindexing and cache cleanup must preserve the user's work.
 - Missing sources, unknown metadata, analysis errors, and pending jobs are
   distinct states. Do not silently resolve ambiguous file matches.

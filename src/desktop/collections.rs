@@ -175,6 +175,7 @@ impl Collections {
                 _ => {} // stale pages/operations cannot replace the active selection
             }
         }
+        self.request_pages();
     }
 
     fn activate(&mut self, id: CollectionId) {

@@ -26,7 +26,7 @@ pub enum Error {
     UnsupportedSchema(i64),
     #[error("Invalid catalog path encoding")]
     InvalidPath,
-    #[error("The selected library root is not a directory")]
+    #[error("Choose an ordinary directory without a symbolic link or reparse point")]
     InvalidRoot,
     #[error("{0}")]
     InvalidQuery(String),

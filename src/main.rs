@@ -88,6 +88,14 @@ fn run(arguments: Arguments) -> sift::Result<()> {
         }
         Command::Index { folder } => {
             let mut catalog = Catalog::open(&database)?;
+            let mut registry = sift::libraries::Store::open(&sift::libraries::data_path(&database))
+                .map_err(|error| sift::Error::Configuration(error.to_string()))?;
+            registry
+                .import_legacy(&catalog.roots()?)
+                .map_err(|error| sift::Error::Configuration(error.to_string()))?;
+            let folder = registry
+                .register_folder_bank(&folder)
+                .map_err(|error| sift::Error::Configuration(error.to_string()))?;
             let report = library::scan(&folder, &mut catalog, &Cancellation::default(), |_| {})?;
             println!(
                 "Indexed {} files; {} metadata/traversal errors; {} links skipped",

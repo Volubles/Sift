@@ -201,6 +201,42 @@ impl Store {
         Ok(())
     }
 
+    /// The CLI indexes one folder as a bank, reusing an existing registration.
+    pub fn register_folder_bank(&mut self, path: &Path) -> Result<PathBuf> {
+        let metadata = std::fs::symlink_metadata(path)?;
+        if !metadata.is_dir() || is_link(&metadata) {
+            return Err(Error::InvalidSource);
+        }
+        let path = path.canonicalize()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let registered: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sources WHERE source_path=?1)",
+            [path_codec::encode(&path)],
+            |row| row.get(0),
+        )?;
+        if !registered {
+            let count: i64 =
+                transaction.query_row("SELECT count(*) FROM libraries", [], |row| row.get(0))?;
+            if count >= MAX_LIBRARIES as i64 {
+                return Err(Error::Limit);
+            }
+            let name = unique_folder_name(&transaction, &path)?;
+            transaction.execute(
+                "INSERT INTO libraries(name,name_key) VALUES(?1,?2)",
+                params![name, name.to_lowercase()],
+            )?;
+            insert_source(
+                &transaction,
+                LibraryId(transaction.last_insert_rowid()),
+                &path,
+            )?;
+        }
+        transaction.commit()?;
+        Ok(path)
+    }
+
     /// Import previous root registrations once. No filesystem access or scan is
     /// needed: an offline bank must remain visible after upgrading or rebuilding.
     pub fn import_legacy(&mut self, roots: &[PathBuf]) -> Result<()> {
@@ -232,32 +268,7 @@ impl Store {
             if count >= MAX_LIBRARIES as i64 {
                 return Err(Error::Limit);
             }
-            let base = path
-                .file_name()
-                .unwrap_or(path.as_os_str())
-                .to_string_lossy();
-            let base: String = base
-                .chars()
-                .filter(|ch| !ch.is_control())
-                .take(100)
-                .collect();
-            let base = if base.trim().is_empty() {
-                "Imported library"
-            } else {
-                base.trim()
-            };
-            let mut name = base.to_owned();
-            let mut suffix = 2;
-            loop {
-                match name_available(&transaction, &name, None) {
-                    Ok(()) => break,
-                    Err(Error::NameConflict) => {
-                        name = format!("{base} ({suffix})");
-                        suffix += 1;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
+            let name = unique_folder_name(&transaction, path)?;
             transaction.execute(
                 "INSERT INTO libraries(name,name_key) VALUES(?1,?2)",
                 params![name, name.to_lowercase()],
@@ -337,6 +348,35 @@ fn valid_name(name: &str) -> Result<String> {
         return Err(Error::InvalidName);
     }
     Ok(name.to_owned())
+}
+
+fn unique_folder_name(connection: &Connection, path: &Path) -> Result<String> {
+    let base = path
+        .file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy();
+    let base: String = base
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(100)
+        .collect();
+    let base = if base.trim().is_empty() {
+        "Imported library"
+    } else {
+        base.trim()
+    };
+    let mut name = base.to_owned();
+    let mut suffix = 2;
+    loop {
+        match name_available(connection, &name, None) {
+            Ok(()) => return Ok(name),
+            Err(Error::NameConflict) => {
+                name = format!("{base} ({suffix})");
+                suffix += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn name_available(connection: &Connection, name: &str, except: Option<LibraryId>) -> Result<()> {

@@ -33,7 +33,7 @@ on a worker when snapshots refresh, not on every frame.
 
 ## Browser checkpoint
 
-The planned desktop integration provides Libraries and Collections in a narrow
+The desktop integration provides Libraries and Collections in a narrow
 activity rail. The library sidebar shows named banks above their source/folder
 tree. Selecting a bank shows all its indexed sounds; selecting a folder scopes
 the central table and search to that subtree. `All files` restores the bank
@@ -44,13 +44,36 @@ worker. Attaching registers the directory before scanning; cancelling the scan
 retains the registration and committed batches. Removing a registration leaves
 its index rows as rebuildable cache, excluded from registered-bank queries.
 
+The existing index thread owns both the catalog writer and the durable library
+connection. The independent read thread serves search and folder pages. Their
+command/read/event queues are bounded at 4/4/8. Query and tree generations reject
+late answers; accepted edits drain on shutdown even when completion is unread.
+The UI holds one 64-row page per open folder, with at most 32 open branches and
+visible-row rendering. Collapsing a branch releases its descendant pages.
+Failed edits retain their command and name draft for correction, retry, or discard.
+Changing sidebar mode leaves the library scope and search text intact. No new
+framework, service, runtime, or application thread was introduced.
+
+The CLI `index` command also registers its source as a named bank, reusing an
+existing registration. `browse --folder` attaches to the selected bank or
+creates `My library` for an empty registry. These developer entry points use
+the same source validation and durable storage.
+
 ## Limits and evidence
 
 The storage tests cover overlapping roots, stable sample IDs, native Unicode
 component boundaries, folder paging, schema-1 migration/rollback, restart,
 index rebuild, offline sources, source preservation, and one-time legacy import.
-Desktop integration and physical mouse interaction are still pending at this
-foundation checkpoint.
+Desktop tests cover failed-draft recovery, form-opening Enter behavior, stale
+tree answers, scoped worker responses, and unread-save shutdown. All five
+generated WAV/FLAC/MP3/AIFF fixture hashes remain unchanged after indexing.
+A native release capture rendered the two-bank browser and four-row selected
+bank; it was visually inspected before the final painted-arrow/row polish.
+The Windows helper could read controls but could not click an indexed element;
+Computer Use was then stopped with physical Escape. Folder/bank mouse selection,
+source dialogs, Collections mode switching, and Explorer gestures remain manual
+runtime checks. The final build is compiled; no new CPU/RAM qualification is
+claimed.
 
 The scanner remains additive/updating. Deleted/moved file reconciliation,
 incremental metadata skipping, source relinking, favourites, multi-library

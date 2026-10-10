@@ -116,6 +116,12 @@ impl Catalog {
                     after = id;
                 }
             }
+            // Build every original root's hierarchy before discarding duplicate
+            // rows: the oldest record may belong to a deeply nested registration.
+            transaction.execute_batch(
+                "DELETE FROM samples WHERE id NOT IN (SELECT min(id) FROM samples GROUP BY source_path);
+                 CREATE UNIQUE INDEX samples_source ON samples(source_path);",
+            )?;
             transaction.commit()?;
         }
         connection.pragma_update(None, "journal_mode", "WAL")?;
