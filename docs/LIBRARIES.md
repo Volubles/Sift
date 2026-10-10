@@ -75,8 +75,8 @@ source dialogs, Collections mode switching, and Explorer gestures remain manual
 runtime checks. The final build is compiled; no new CPU/RAM qualification is
 claimed.
 
-The scanner remains additive/updating. Deleted/moved file reconciliation,
-incremental metadata skipping, source relinking, favourites, multi-library
+The [incremental live index](INDEXING.md) now skips unchanged metadata and
+reconciles moved/deleted cached paths. Durable source relinking, favourites, multi-library
 selection, and restart persistence of the active view are later checkpoints.
 Exact locators are deduplicated; distinct hard links or filesystem aliases are
 not a content-hash identity system. No performance improvement is claimed from

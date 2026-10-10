@@ -42,6 +42,13 @@ Later scans primarily process changed files. Define behavior for symbolic-link
 cycles, repeated roots, and overlapping roots. Changes during a scan must not
 produce a false completed state.
 
+Registered source folders are watched for additions, writes, renames, moves,
+and removals. Small changes update the index without rescanning ordinary
+unchanged audio. Coalesce bursts, recover explicitly from notification loss,
+show pending work, preserve view state, and allow pausing/resuming live updates.
+Offline roots retain cached metadata and manually saved work. Validate the
+100,000-file scenario with real generated files before claiming responsiveness.
+
 Initial format targets are WAV, FLAC, MP3, and AIFF. Verify actual codec variants,
 bit depths, and metadata in the prototype. Reading a container is not equivalent
 to complete metadata or playback support. Report unsupported, corrupt, and

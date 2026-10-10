@@ -340,6 +340,21 @@ impl Store {
         }
         Ok(libraries)
     }
+
+    pub(crate) fn source_paths(&self) -> Result<Vec<PathBuf>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT DISTINCT source_path FROM sources LIMIT 513")?;
+        let mut rows = statement.query([])?;
+        let mut paths = Vec::new();
+        while let Some(row) = rows.next()? {
+            if paths.len() == MAX_TOTAL_SOURCES {
+                return Err(Error::Limit);
+            }
+            paths.push(path_codec::decode(row.get(0)?)?);
+        }
+        Ok(paths)
+    }
 }
 
 fn valid_name(name: &str) -> Result<String> {

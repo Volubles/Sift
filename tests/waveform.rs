@@ -59,3 +59,44 @@ fn malformed_cached_peaks_are_rejected_as_rebuildable_data() {
         .unwrap();
     assert!(cache.get(&source).unwrap().is_none());
 }
+
+#[test]
+fn observed_write_can_rebuild_peaks_even_when_size_and_timestamp_were_preserved() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let temporary = tempfile::tempdir().unwrap();
+    let source = temporary.path().join("tone.wav");
+    common::wave(&source, 8_000, 800);
+    let stamp = std::fs::metadata(&source).unwrap().modified().unwrap();
+    let (wake, signals) = mpsc::channel();
+    let mut worker =
+        waveform::Waveforms::start(temporary.path().join("catalog.sqlite"), move || {
+            wake.send(()).unwrap()
+        })
+        .unwrap();
+    worker.request(1, source.clone()).unwrap();
+    signals.recv_timeout(Duration::from_secs(3)).unwrap();
+    let original = worker.poll().unwrap().result.unwrap();
+    assert!(original.peaks.iter().any(|peak| peak[1] > 0.6));
+    let mut bytes = std::fs::read(&source).unwrap();
+    bytes[44..].fill(0);
+    std::fs::write(&source, bytes).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(stamp))
+        .unwrap();
+    worker.rebuild(2, source.clone()).unwrap();
+    signals.recv_timeout(Duration::from_secs(3)).unwrap();
+    let fresh = worker.poll().unwrap();
+    assert!(!fresh.cache_hit);
+    assert!(
+        fresh
+            .result
+            .unwrap()
+            .peaks
+            .iter()
+            .all(|peak| *peak == [0.0, 0.0])
+    );
+}

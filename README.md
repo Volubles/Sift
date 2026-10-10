@@ -50,6 +50,11 @@ Choose a bank for all its sounds, or a folder for that branch and its descendant
 scope. Right-click a bank to rename/remove it or a source to rescan/remove its
 registration. Source audio stays in place.
 
+**Live updates** watches registered Windows folders automatically. Add, change,
+rename, move, or remove sounds and the index follows after a brief settling
+period. Pause with the checkbox; resuming checks for changes made while paused.
+Unavailable roots retain cached data. Cancelling an update pauses watching.
+
 Click a sound to inspect its metadata and waveform. Play/Pause,
 Space, Stop, volume, waveform clicking, and **Auto-play** control the preview.
 Choose the grid icon for **Collections**, preserving the current bank/folder/query.

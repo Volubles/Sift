@@ -65,15 +65,32 @@ all four SHA-256 source hashes were unchanged afterward.
 
 ## Next proposed task
 
-Incremental indexing is implemented in catalog schema 3. Unchanged inventories
+Incremental indexing and live Windows updates are implemented in catalog schema 3. Unchanged inventories
 skip audio probes and persistent sample/FTS writes, while completed inventories
 remove missing cache rows and empty derived folders. Cancelled/incomplete scans
 and offline roots retain previous data. Native path updates reconcile a changed
 file or subtree and force probing for timestamp-preserving writes. Non-reused
 sample IDs prevent a deleted selection from attaching to a new file; saved
 collections remain independent. Generated fixture tests cover these rules.
-The next checkpoint is live Windows watching, desktop refresh, and measured
-100,000-file behavior. See [Indexing](INDEXING.md).
+Native directory watching detects additions, writes, moves/renames, and removals,
+with bounded settling/coalescing and explicit loss recovery. Offline sources
+retain cached data; paused watching catches up on resume. The desktop preserves
+scope/query/selection/scroll through updates and validates selected sources on
+the read worker before refreshing metadata/waveforms. Source writes can bypass
+waveform cache signatures. A native release capture was visually checked.
+See [Indexing](INDEXING.md) for threads, limits, dependency choice, and semantics.
+
+74 desktop tests pass, including actual Windows filesystem events; 52 headless
+tests, formatting, and Clippy pass. The real generated 100,000-WAV release
+harness also passed. Individual additions inspected one audio file, with
+median/p95/max 235/238/241 ms; a ten-file burst took 279 ms. Unchanged inventory
+took 2.4–2.8 s against 15–16 s full-refresh repeats in the prior release.
+Initial import is still slower (21.8 s after batching directory inserts; prior
+initial 14.8 s) and remains an optimization target. The index/watcher component
+averaged 19.56 MiB private bytes and had no measurable CPU-time increase over
+56.7 sampled seconds inside a 60-second no-scan observation. This excludes
+desktop/GPU/audio and is not full idle-budget qualification. See
+[measurement](INDEXING-BASELINE.md).
 
 Named libraries and the folder browser are implemented. The drive/grid activity
 rail switches Libraries and Collections while preserving the current bank,
@@ -179,8 +196,8 @@ input and cannot qualify idle CPU.
 
 Next concrete step: verify bank creation, multiple source folders, subtree
 selection, Collections switching, and the revised Explorer handoff on disposable
-fixtures. Then implement incremental indexing and deleted/moved source
-reconciliation. Virtual collection folders, ordering, multi-selection, broader
+fixtures. Then add Favorites or explicit durable-source relinking, based on the
+next product checkpoint. Virtual collection folders, ordering, multi-selection, broader
 device tests, and performance qualification remain later checkpoints.
 Sift is still a prototype, not a finished sampler.
 

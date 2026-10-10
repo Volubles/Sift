@@ -20,6 +20,7 @@ pub struct Sample {
     pub size_bytes: u64,
     pub audio: AudioMetadata,
     pub metadata_error: Option<String>,
+    pub stamp: Option<FileStamp>,
 }
 
 #[derive(Debug)]
@@ -183,6 +184,7 @@ impl Catalog {
         }
         let transaction = self.connection.transaction()?;
         let mut written = 0;
+        let mut recorded_parents = std::collections::BTreeSet::new();
         let root = path_codec::decode(transaction.query_row(
             "SELECT source_path FROM library_roots WHERE id=?1",
             [root_id],
@@ -190,8 +192,8 @@ impl Catalog {
         )?)?;
         {
             let mut statement = transaction.prepare_cached(
-                "INSERT INTO samples(root_id, source_path, name, name_key, path, format, size_bytes, duration_seconds, sample_rate, channels, bit_depth, metadata_error,modified_ns,created_ns,probe_version)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,?13,?14,?15)
+                "INSERT INTO samples(id,root_id, source_path, name, name_key, path, format, size_bytes, duration_seconds, sample_rate, channels, bit_depth, metadata_error,modified_ns,created_ns,probe_version)
+                 VALUES ((SELECT id FROM samples WHERE source_path=?2),?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,?13,?14,?15)
                  ON CONFLICT(source_path) DO UPDATE SET root_id=excluded.root_id,
                    name=excluded.name, name_key=excluded.name_key, path=excluded.path,
                    format=excluded.format, size_bytes=excluded.size_bytes,
@@ -208,7 +210,13 @@ impl Catalog {
                    OR samples.probe_version IS NOT excluded.probe_version",
             )?;
             for file in files {
-                record_folders(&transaction, &file.source, &root)?;
+                // Enumeration batches usually share a directory. Insert its
+                // hierarchy once per batch, rather than repeating SQL per sound.
+                if let Some(parent) = file.source.parent()
+                    && recorded_parents.insert(parent)
+                {
+                    record_folders(&transaction, &file.source, &root)?;
+                }
                 let size = i64::try_from(file.size_bytes).map_err(|_| Error::OutOfRange)?;
                 written += statement.execute(params![
                     root_id,
@@ -277,29 +285,14 @@ impl Catalog {
             i64::try_from(offset).map_err(|_| Error::OutOfRange)?,
         ));
         let sql = format!(
-            "SELECT s.id, s.source_path, s.name, s.path, s.format, s.size_bytes, s.duration_seconds, s.sample_rate, s.channels, s.bit_depth, s.metadata_error FROM samples s WHERE {condition} ORDER BY s.name_key, s.id LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}"
+            "SELECT s.id, s.source_path, s.name, s.path, s.format, s.size_bytes, s.duration_seconds, s.sample_rate, s.channels, s.bit_depth, s.metadata_error,s.modified_ns,s.created_ns FROM samples s WHERE {condition} ORDER BY s.name_key, s.id LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}"
         );
         let mut rows_out = Vec::with_capacity(PAGE_SIZE);
         {
             let mut statement = transaction.prepare(&sql)?;
             let mut rows = statement.query(params_from_iter(&values))?;
             while let Some(row) = rows.next()? {
-                rows_out.push(Sample {
-                    id: SampleId(row.get(0)?),
-                    source: path_codec::decode(row.get(1)?)?,
-                    name: row.get(2)?,
-                    display_path: row.get(3)?,
-                    format: row.get(4)?,
-                    size_bytes: u64::try_from(row.get::<_, i64>(5)?)
-                        .map_err(|_| Error::OutOfRange)?,
-                    audio: AudioMetadata {
-                        duration_seconds: row.get(6)?,
-                        sample_rate: row.get(7)?,
-                        channels: row.get(8)?,
-                        bit_depth: row.get(9)?,
-                    },
-                    metadata_error: row.get(10)?,
-                });
+                rows_out.push(sample_from_row(row)?);
             }
         }
         transaction.commit()?;
@@ -320,6 +313,12 @@ impl Catalog {
             roots.push(path_codec::decode(row.get(0)?)?);
         }
         Ok(roots)
+    }
+
+    pub(crate) fn sample(&self, source: &Path) -> Result<Option<Sample>> {
+        let mut statement=self.connection.prepare_cached("SELECT id,source_path,name,path,format,size_bytes,duration_seconds,sample_rate,channels,bit_depth,metadata_error,modified_ns,created_ns FROM samples WHERE source_path=?1")?;
+        let mut rows = statement.query([path_codec::encode(source)])?;
+        rows.next()?.map(sample_from_row).transpose()
     }
 
     pub(crate) fn unchanged(&self, source: &Path, stamp: &FileStamp) -> Result<bool> {
@@ -454,6 +453,32 @@ impl Catalog {
             rows: output,
         })
     }
+}
+
+fn sample_from_row(row: &rusqlite::Row<'_>) -> Result<Sample> {
+    let size_bytes = u64::try_from(row.get::<_, i64>(5)?).map_err(|_| Error::OutOfRange)?;
+    let modified_ns: Option<i64> = row.get(11)?;
+    let created_ns: Option<i64> = row.get(12)?;
+    Ok(Sample {
+        id: SampleId(row.get(0)?),
+        source: path_codec::decode(row.get(1)?)?,
+        name: row.get(2)?,
+        display_path: row.get(3)?,
+        format: row.get(4)?,
+        size_bytes,
+        audio: AudioMetadata {
+            duration_seconds: row.get(6)?,
+            sample_rate: row.get(7)?,
+            channels: row.get(8)?,
+            bit_depth: row.get(9)?,
+        },
+        metadata_error: row.get(10)?,
+        stamp: modified_ns.map(|modified| FileStamp {
+            size_bytes,
+            modified_ns: Some(modified),
+            created_ns,
+        }),
+    })
 }
 
 fn record_folders(connection: &Connection, source: &Path, root: &Path) -> Result<()> {

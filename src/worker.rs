@@ -7,10 +7,13 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::catalog::{Catalog, FolderPage, Scope, SearchPage};
+use crate::catalog::{Catalog, FolderPage, Sample, Scope, SearchPage};
+use crate::collections::{Availability, Reference};
 use crate::libraries::{self, Library, LibraryId, SourceId};
+use crate::library::FileStamp;
 use crate::library::{self, Cancellation, ScanReport};
 use crate::search::SearchQuery;
+mod index;
 
 #[derive(Debug)]
 pub enum Event {
@@ -31,6 +34,24 @@ pub enum Event {
     Progress(ScanReport),
     ScanFinished(std::result::Result<ScanReport, String>),
     StartupFailed(String),
+    SyncStarted,
+    SyncFinished {
+        report: ScanReport,
+        touched: Vec<PathBuf>,
+        full_roots: Vec<PathBuf>,
+        forced_roots: Vec<PathBuf>,
+    },
+    WatchStatus {
+        enabled: bool,
+        message: String,
+    },
+    SourceReady {
+        generation: u64,
+        refresh: SourceRefresh,
+        sample: Option<Sample>,
+        stamp: Option<FileStamp>,
+        availability: Availability,
+    },
 }
 
 struct QueryRequest {
@@ -47,6 +68,17 @@ enum ReadRequest {
         parent: PathBuf,
         offset: usize,
     },
+    Source {
+        generation: u64,
+        reference: Reference,
+        refresh: SourceRefresh,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SourceRefresh {
+    Verify,
+    ObservedWrite,
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +100,8 @@ enum IndexRequest {
     Scan(PathBuf, Cancellation),
     Edit { token: u64, edit: LibraryEdit },
     Refresh,
+    Wake,
+    Live(bool),
 }
 
 pub struct Workers {
@@ -77,7 +111,9 @@ pub struct Workers {
     shutdown: Arc<AtomicBool>,
     latest_generation: Arc<AtomicU64>,
     latest_folder_generation: Arc<AtomicU64>,
+    latest_source_generation: Arc<AtomicU64>,
     scan_cancellation: Option<Cancellation>,
+    automatic_cancellation: Cancellation,
     threads: Vec<JoinHandle<()>>,
 }
 
@@ -94,8 +130,12 @@ impl Workers {
         let shutdown = Arc::new(AtomicBool::new(false));
         let latest_generation = Arc::new(AtomicU64::new(0));
         let reader_generation = latest_generation.clone();
+        let automatic_cancellation = Cancellation::default();
+        let automatic_token = automatic_cancellation.clone();
         let latest_folder_generation = Arc::new(AtomicU64::new(0));
         let folder_generation = latest_folder_generation.clone();
+        let latest_source_generation = Arc::new(AtomicU64::new(0));
+        let source_generation = latest_source_generation.clone();
         let mut workers = Self {
             events: Some(events),
             queries: Some(query_sender),
@@ -103,7 +143,9 @@ impl Workers {
             shutdown: shutdown.clone(),
             latest_generation,
             latest_folder_generation,
+            latest_source_generation,
             scan_cancellation: None,
+            automatic_cancellation,
             threads: Vec::new(),
         };
 
@@ -111,100 +153,26 @@ impl Workers {
         let notify = wake.clone();
         let stop = shutdown.clone();
         let writer_database = database.clone();
+        let watch_requests = workers
+            .scans
+            .as_ref()
+            .cloned()
+            .expect("Index sender was initialized above");
         let writer = thread::Builder::new()
             .name("sift-index".into())
             .spawn(move || {
-                let mut writer = match Catalog::open(&writer_database) {
-                    Ok(writer) => writer,
-                    Err(error) => {
-                        deliver(&sender, &notify, Event::StartupFailed(error.to_string()));
-                        return;
-                    }
-                };
-                let mut registry = match libraries::Store::open(&libraries::data_path(
-                    &writer_database,
-                ))
-                .and_then(|mut store| {
-                    store.import_legacy(&writer.roots()?)?;
-                    Ok(store)
-                }) {
-                    Ok(store) => store,
-                    Err(error) => {
-                        deliver(&sender, &notify, Event::StartupFailed(error.to_string()));
-                        return;
-                    }
-                };
-                let snapshot = registry
-                    .snapshot(&writer)
-                    .map_err(|error| error.to_string());
-                // Closing during startup must still drain already accepted edits.
-                deliver(&sender, &notify, Event::Libraries(snapshot));
-                if ready_sender.send(()).is_err() {
-                    return;
-                }
-                while let Ok(request) = scan_receiver.recv() {
-                    let (folder, cancellation) = match request {
-                        IndexRequest::Edit { token, edit } => {
-                            // Accepted edits drain even after the observer closes.
-                            let result = apply_edit(&mut registry, edit);
-                            let observed =
-                                deliver(&sender, &notify, Event::LibraryEdited { token, result });
-                            if observed && !stop.load(Ordering::Relaxed) {
-                                deliver(
-                                    &sender,
-                                    &notify,
-                                    Event::Libraries(
-                                        registry
-                                            .snapshot(&writer)
-                                            .map_err(|error| error.to_string()),
-                                    ),
-                                );
-                            }
-                            continue;
-                        }
-                        IndexRequest::Refresh => {
-                            if !stop.load(Ordering::Relaxed) {
-                                deliver(
-                                    &sender,
-                                    &notify,
-                                    Event::Libraries(
-                                        registry
-                                            .snapshot(&writer)
-                                            .map_err(|error| error.to_string()),
-                                    ),
-                                );
-                            }
-                            continue;
-                        }
-                        IndexRequest::Scan(folder, cancellation) => (folder, cancellation),
-                    };
-                    if stop.load(Ordering::Relaxed) {
-                        continue;
-                    }
-                    let mut last_progress = Instant::now();
-                    let result = library::scan(&folder, &mut writer, &cancellation, |report| {
-                        if last_progress.elapsed() >= Duration::from_millis(100) {
-                            // Progress may be coalesced; completion and errors must not be lost.
-                            if sender.try_send(Event::Progress(report.clone())).is_ok() {
-                                notify();
-                            }
-                            last_progress = Instant::now();
-                        }
-                    })
-                    .map_err(|error| error.to_string());
-                    if !deliver(&sender, &notify, Event::ScanFinished(result)) {
-                        continue;
-                    }
-                    deliver(
-                        &sender,
-                        &notify,
-                        Event::Libraries(
-                            registry
-                                .snapshot(&writer)
-                                .map_err(|error| error.to_string()),
-                        ),
-                    );
-                }
+                index::run(
+                    writer_database,
+                    index::Runtime {
+                        events: sender,
+                        notify,
+                        stop,
+                        automatic: automatic_token,
+                        requests: scan_receiver,
+                        ready: ready_sender,
+                        watch_requests,
+                    },
+                )
             })?;
         workers.threads.push(writer);
 
@@ -263,6 +231,52 @@ impl Workers {
                                     .map_err(|error| error.to_string()),
                             }
                         }
+                        ReadRequest::Source {
+                            generation,
+                            reference,
+                            refresh,
+                        } => {
+                            if generation < source_generation.load(Ordering::Relaxed) {
+                                wake();
+                                continue;
+                            }
+                            let result = (|| -> crate::Result<(Option<Sample>, FileStamp)> {
+                                let info = std::fs::symlink_metadata(&reference.source)?;
+                                if !info.is_file() || library::is_link(&info) {
+                                    return Err(crate::Error::InvalidPath);
+                                }
+                                if let Some(parent) = reference.source.parent() {
+                                    library::ordinary_directory(parent)?;
+                                }
+                                let source = reference.source.canonicalize()?;
+                                Ok((reader.sample(&source)?, FileStamp::read(&info)))
+                            })();
+                            let (sample, stamp, availability) = match result {
+                                Ok((sample, stamp)) => {
+                                    let availability = if stamp.size_bytes != reference.size_bytes {
+                                        Availability::Changed
+                                    } else {
+                                        Availability::Ready
+                                    };
+                                    (sample, Some(stamp), availability)
+                                }
+                                Err(crate::Error::Io(error))
+                                    if error.kind() == std::io::ErrorKind::NotFound =>
+                                {
+                                    (None, None, Availability::Missing)
+                                }
+                                Err(error) => {
+                                    (None, None, Availability::Unavailable(error.to_string()))
+                                }
+                            };
+                            Event::SourceReady {
+                                generation,
+                                refresh,
+                                sample,
+                                stamp,
+                                availability,
+                            }
+                        }
                     };
                     if !deliver(&event_sender, &wake, event) {
                         break;
@@ -315,6 +329,24 @@ impl Workers {
                 .is_ok()
         })
     }
+    pub fn check_source(
+        &self,
+        generation: u64,
+        reference: Reference,
+        refresh: SourceRefresh,
+    ) -> bool {
+        self.latest_source_generation
+            .fetch_max(generation, Ordering::Relaxed);
+        self.queries.as_ref().is_some_and(|sender| {
+            sender
+                .try_send(ReadRequest::Source {
+                    generation,
+                    reference,
+                    refresh,
+                })
+                .is_ok()
+        })
+    }
 
     pub fn edit_library(&self, token: u64, edit: LibraryEdit) -> std::result::Result<(), String> {
         self.send_index(IndexRequest::Edit { token, edit })
@@ -322,6 +354,13 @@ impl Workers {
 
     pub fn refresh_libraries(&self) -> std::result::Result<(), String> {
         self.send_index(IndexRequest::Refresh)
+    }
+    pub fn set_live_updates(&self, enabled: bool) -> std::result::Result<(), String> {
+        self.send_index(IndexRequest::Live(enabled))?;
+        if !enabled {
+            self.automatic_cancellation.cancel();
+        }
+        Ok(())
     }
 
     fn send_index(&self, request: IndexRequest) -> std::result::Result<(), String> {
@@ -358,6 +397,7 @@ impl Workers {
     }
 
     pub fn cancel_scan(&self) {
+        self.automatic_cancellation.cancel();
         if let Some(token) = &self.scan_cancellation {
             token.cancel();
         }
@@ -420,6 +460,12 @@ impl Drop for Workers {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
         self.cancel_scan();
+        if let Some(sender) = &self.scans {
+            // A full queue already wakes the owner; disconnected means it exited.
+            match sender.try_send(IndexRequest::Wake) {
+                Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {}
+            }
+        }
         // Drop consumers before joining: a worker blocked by a full event queue
         // must be released even if the UI never reads another event.
         drop(self.events.take());
@@ -447,7 +493,14 @@ mod tests {
                 .unwrap()
                 .recv_timeout(Duration::from_secs(5))
                 .unwrap();
-            if !matches!(event, Event::Libraries(_)) {
+            if !matches!(
+                event,
+                Event::Libraries(_)
+                    | Event::WatchStatus { .. }
+                    | Event::SyncStarted
+                    | Event::SyncFinished { .. }
+                    | Event::Progress(_)
+            ) {
                 return event;
             }
         }

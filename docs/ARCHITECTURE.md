@@ -12,9 +12,14 @@ worker owns a writable connection and the search worker owns an independent
 read-only connection. Query generations reject stale results. The UI retains
 at most four 128-record pages; event/read/index-command queues are bounded at 8/4/4.
 The index thread also owns durable named libraries. Folder pages share the read
-worker, with their own generations and a bounded desktop tree cache.
+worker, with their own generations and a bounded desktop tree cache. Selected
+source validation has another generation family on that read worker.
 Workers block when idle and wake the UI on results. Shutdown cancels scanning,
 disconnects channels, and joins workers without an event-queue deadlock.
+The [live index](INDEXING.md) adds one native notification consumer, bounded
+coalescing, event-loss recovery, and OS thread-pool directory subscriptions.
+The consumer blocks when idle; filesystem inspection/SQL remain on the index
+owner. Private owned events guarantee shutdown even with no registered roots.
 
 Default runtime storage is in the user's data directory, not the build cache
 or launch directory. The desktop/headless feature configurations share the same

@@ -101,6 +101,12 @@ struct Request {
     generation: u64,
     path: PathBuf,
     cancellation: Cancellation,
+    cache: CachePolicy,
+}
+
+enum CachePolicy {
+    Reuse,
+    Rebuild,
 }
 
 pub struct Waveforms {
@@ -143,7 +149,9 @@ impl Waveforms {
                     }
                     let mut cache_hit = false;
                     let result = (|| {
-                        if let Some(cache) = &mut cache {
+                        if matches!(request.cache, CachePolicy::Reuse)
+                            && let Some(cache) = &mut cache
+                        {
                             match cache.get(&request.path) {
                                 Ok(Some(waveform)) => {
                                     cache_hit = true;
@@ -189,6 +197,12 @@ impl Waveforms {
     }
 
     pub fn request(&mut self, generation: u64, path: PathBuf) -> AudioResult<()> {
+        self.submit(generation, path, CachePolicy::Reuse)
+    }
+    pub fn rebuild(&mut self, generation: u64, path: PathBuf) -> AudioResult<()> {
+        self.submit(generation, path, CachePolicy::Rebuild)
+    }
+    fn submit(&mut self, generation: u64, path: PathBuf, cache: CachePolicy) -> AudioResult<()> {
         if let Some(token) = self.cancellation.take() {
             token.cancel();
         }
@@ -201,6 +215,7 @@ impl Waveforms {
             generation,
             path,
             cancellation: cancellation.clone(),
+            cache,
         });
         self.cancellation = Some(cancellation);
         if let Some(wake) = &self.wake {

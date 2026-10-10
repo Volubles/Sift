@@ -14,11 +14,11 @@ use crate::catalog::{Sample, SampleId, SearchPage};
 use crate::collections::{
     Availability, Entry, EntryId, Reference, worker::Worker as CollectionWorker,
 };
-use crate::library::ScanReport;
+use crate::library::{FileStamp, ScanReport};
 use crate::platform::{DragError, DragWorker};
 use crate::search::{PAGE_SIZE, SearchQuery};
 use crate::waveform::{Waveform, Waveforms};
-use crate::worker::{Event, Workers};
+use crate::worker::{Event, SourceRefresh, Workers};
 
 mod collections;
 use collections::{Action as CollectionAction, Collections};
@@ -128,6 +128,7 @@ struct Browser {
     query_text: String,
     query: SearchQuery,
     generation: u64,
+    view_generation: u64,
     pages: VecDeque<SearchPage>,
     pending: BTreeSet<usize>,
     total: usize,
@@ -138,8 +139,15 @@ struct Browser {
     selected: Option<Reference>,
     selected_key: Option<SoundKey>,
     selected_availability: Availability,
+    selected_stamp: Option<FileStamp>,
+    source_generation: u64,
+    source_check: Option<SourceRefresh>,
     show_details: bool,
     auto_play: bool,
+    live_updates: bool,
+    watch_message: String,
+    automatic_scan: bool,
+    last_index_refresh: Instant,
     folder: Option<PathBuf>,
     smoke: Option<PathBuf>,
     screenshot_requested: bool,
@@ -179,6 +187,7 @@ impl Browser {
             query_text: String::new(),
             query: SearchQuery::All,
             generation: 0,
+            view_generation: 0,
             pages: VecDeque::new(),
             pending: BTreeSet::new(),
             total: 0,
@@ -189,8 +198,15 @@ impl Browser {
             selected: None,
             selected_key: None,
             selected_availability: Availability::Ready,
+            selected_stamp: None,
+            source_generation: 0,
+            source_check: None,
             show_details: false,
             auto_play: false,
+            live_updates: cfg!(windows),
+            watch_message: "Starting live updates...".into(),
+            automatic_scan: false,
+            last_index_refresh: Instant::now(),
             folder: options.folder,
             smoke: options.smoke_screenshot,
             screenshot_requested: false,
@@ -203,10 +219,15 @@ impl Browser {
     }
 
     fn reset_query(&mut self) {
+        self.view_generation += 1;
+        self.total = 0;
+        self.refresh_query();
+    }
+
+    fn refresh_query(&mut self) {
         self.generation += 1;
         self.pages.clear();
         self.pending.clear();
-        self.total = 0;
         match SearchQuery::parse(&self.query_text) {
             Ok(query) => {
                 self.query = query;
@@ -238,6 +259,7 @@ impl Browser {
     fn begin_scan(&mut self, folder: PathBuf) {
         match self.workers.scan(folder) {
             Ok(()) => {
+                self.automatic_scan = false;
                 self.scan = Some(ScanReport::default());
                 self.scan_summary = None;
                 self.error = None;
@@ -323,6 +345,12 @@ impl Browser {
                 },
                 Event::Page { .. } => {}
                 Event::Progress(report) => {
+                    if report.indexed > 0
+                        && self.last_index_refresh.elapsed() >= Duration::from_millis(250)
+                    {
+                        self.refresh_query();
+                        self.last_index_refresh = Instant::now();
+                    }
                     self.scan = Some(report);
                 }
                 Event::ScanFinished(result) => {
@@ -331,7 +359,7 @@ impl Browser {
                     match result {
                         Ok(report) => {
                             self.scan_summary = Some(report);
-                            self.reset_query();
+                            self.refresh_query();
                         }
                         Err(message) => {
                             eprintln!("Sift indexing failed: {message}");
@@ -339,11 +367,125 @@ impl Browser {
                         }
                     }
                 }
+                Event::SyncStarted => {
+                    self.scan = Some(ScanReport::default());
+                    self.automatic_scan = true;
+                }
+                Event::SyncFinished {
+                    report,
+                    touched,
+                    full_roots,
+                    forced_roots,
+                } => {
+                    self.scan = None;
+                    self.automatic_scan = false;
+                    if report.changed() {
+                        self.refresh_query();
+                    }
+                    if self.selected.as_ref().is_some_and(|sound| {
+                        touched
+                            .iter()
+                            .chain(&full_roots)
+                            .any(|path| sound.source.starts_with(path))
+                    }) {
+                        let observed_write = self.selected.as_ref().is_some_and(|sound| {
+                            touched.contains(&sound.source)
+                                || forced_roots
+                                    .iter()
+                                    .any(|root| sound.source.starts_with(root))
+                        });
+                        self.source_generation += 1;
+                        self.source_check = Some(if observed_write {
+                            SourceRefresh::ObservedWrite
+                        } else {
+                            SourceRefresh::Verify
+                        });
+                    }
+                    if report.errors > 0 || report.incomplete {
+                        self.scan_summary = Some(report);
+                    }
+                }
+                Event::WatchStatus { enabled, message } => {
+                    self.live_updates = enabled;
+                    self.watch_message = message;
+                }
+                Event::SourceReady {
+                    generation,
+                    refresh,
+                    sample,
+                    stamp,
+                    availability,
+                } if generation == self.source_generation => {
+                    let metadata_changed = sample.as_ref().zip(self.selected.as_ref()).is_some_and(
+                        |(current, previous)| {
+                            current.audio != previous.audio
+                                || current.size_bytes != previous.size_bytes
+                                || current.source != previous.source
+                                || current.metadata_error != previous.metadata_error
+                        },
+                    );
+                    let changed = metadata_changed
+                        || matches!(refresh, SourceRefresh::ObservedWrite)
+                        || self
+                            .selected_stamp
+                            .as_ref()
+                            .is_some_and(|previous| Some(previous) != stamp.as_ref());
+                    self.selected_stamp = stamp;
+                    self.selected_availability = availability.clone();
+                    if let Some(sample) = sample {
+                        if matches!(self.selected_key, Some(SoundKey::Library(_))) {
+                            self.selected_key = Some(SoundKey::Library(sample.id));
+                        }
+                        self.selected = Some(Reference::from(&sample));
+                    }
+                    if !availability.usable() {
+                        self.wave_generation += 1;
+                        self.wave_pending = false;
+                        self.waveform = None;
+                        self.wave_error = Some(match availability {
+                            Availability::Missing => {
+                                "Source file is missing; saved references are retained".into()
+                            }
+                            Availability::Unavailable(message) => message,
+                            _ => "Source unavailable".into(),
+                        });
+                        if let Err(error) = self.player.stop() {
+                            self.audio_error = Some(error.to_string());
+                        }
+                    } else if changed {
+                        if let Err(error) = self.player.stop() {
+                            self.audio_error = Some(error.to_string());
+                        }
+                        self.wave_generation += 1;
+                        self.waveform = None;
+                        self.wave_error = None;
+                        if let Some(sound) = &self.selected {
+                            self.wave_pending = sound.metadata_error.is_none();
+                            if self.wave_pending
+                                && let Err(error) = self
+                                    .waveforms
+                                    .rebuild(self.wave_generation, sound.source.clone())
+                            {
+                                self.wave_error = Some(error.to_string());
+                                self.wave_pending = false;
+                            }
+                        }
+                    }
+                }
+                Event::SourceReady { .. } => {}
                 Event::StartupFailed(message) => {
                     eprintln!("Sift catalog startup failed: {message}");
                     self.error = Some(format!("Catalog could not open: {message}"));
                 }
             }
+        }
+        if let Some(refresh) = self.source_check
+            && let Some(reference) = &self.selected
+            && self
+                .workers
+                .check_source(self.source_generation, reference.clone(), refresh)
+        {
+            self.source_check = None;
         }
         while let Some(ready) = self.waveforms.poll() {
             if ready.generation != self.wave_generation {
@@ -377,11 +519,13 @@ impl Browser {
     }
 
     fn select_sample(&mut self, sample: Sample) {
+        let stamp = sample.stamp.clone();
         self.select(
             Reference::from(&sample),
             SoundKey::Library(sample.id),
             Availability::Ready,
         );
+        self.selected_stamp = stamp;
     }
 
     fn select_entry(&mut self, entry: Entry) {
@@ -424,6 +568,9 @@ impl Browser {
         self.selected = Some(sample);
         self.selected_key = Some(key);
         self.selected_availability = availability;
+        self.selected_stamp = None;
+        self.source_generation += 1;
+        self.source_check = Some(SourceRefresh::Verify);
     }
 
     fn begin_drag(&mut self, sample: Reference) {
@@ -605,7 +752,25 @@ impl Browser {
             ui.label(RichText::new("Your sounds, within reach.").weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.toggle_value(&mut self.show_details, "Details");
-                if self.scan.is_some() && ui.button("Cancel scan").clicked() {
+                let previous = self.live_updates;
+                if ui
+                    .checkbox(&mut self.live_updates, "Live updates")
+                    .on_hover_text(&self.watch_message)
+                    .changed()
+                    && let Err(error) = self.workers.set_live_updates(self.live_updates)
+                {
+                    self.live_updates = previous;
+                    self.watch_message = error;
+                }
+                if self.scan.is_some()
+                    && ui
+                        .button(if self.automatic_scan {
+                            "Cancel update"
+                        } else {
+                            "Cancel scan"
+                        })
+                        .clicked()
+                {
                     self.workers.cancel_scan();
                 }
             });
@@ -615,6 +780,9 @@ impl Browser {
                 .small()
                 .color(Color32::from_rgb(135, 222, 194)),
         );
+        if !self.live_updates {
+            ui.label(RichText::new(&self.watch_message).small().weak());
+        }
         ui.add_space(12.0);
         let response = ui.add_sized(
             [ui.available_width(), 34.0],
@@ -842,7 +1010,7 @@ impl Browser {
         let mut drag_sample = None;
         table_heading(ui);
         egui::ScrollArea::vertical()
-            .id_salt(("samples", self.generation))
+            .id_salt(("samples", self.view_generation))
             .auto_shrink([false, false])
             .show_rows(ui, 28.0, self.total, |ui, range| {
                 for index in range {

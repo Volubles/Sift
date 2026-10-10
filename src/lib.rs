@@ -5,6 +5,7 @@ pub mod config;
 pub mod libraries;
 pub mod library;
 pub mod search;
+pub mod watch;
 pub mod waveform;
 pub mod worker;
 

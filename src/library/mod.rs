@@ -13,6 +13,12 @@ use crate::{Error, Result};
 pub(crate) const PROBE_VERSION: i64 = 1;
 const BATCH_SIZE: usize = 64;
 
+#[derive(Clone, Copy)]
+enum ProbePolicy {
+    ChangedFiles,
+    AllFiles,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AudioMetadata {
     pub duration_seconds: Option<f64>,
@@ -29,7 +35,7 @@ pub struct FileStamp {
 }
 
 impl FileStamp {
-    fn read(metadata: &std::fs::Metadata) -> Self {
+    pub(crate) fn read(metadata: &std::fs::Metadata) -> Self {
         Self {
             size_bytes: metadata.len(),
             modified_ns: metadata.modified().ok().and_then(timestamp),
@@ -51,6 +57,9 @@ impl Cancellation {
     }
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
+    }
+    pub(crate) fn reset(&self) {
+        self.0.store(false, Ordering::Relaxed);
     }
 }
 
@@ -127,7 +136,33 @@ pub fn scan(
     progress: impl FnMut(&ScanReport),
 ) -> Result<ScanReport> {
     let root = ordinary_directory(root)?;
-    scan_tree(&root, &root, catalog, cancellation, progress)
+    scan_tree(
+        &root,
+        &root,
+        catalog,
+        cancellation,
+        ProbePolicy::ChangedFiles,
+        progress,
+    )
+}
+
+/// A missed notification may hide a timestamp-preserving edit. Recheck metadata
+/// once to recover completeness; ordinary updates still use the cheap signature.
+pub fn scan_after_event_loss(
+    root: &Path,
+    catalog: &mut Catalog,
+    cancellation: &Cancellation,
+    progress: impl FnMut(&ScanReport),
+) -> Result<ScanReport> {
+    let root = ordinary_directory(root)?;
+    scan_tree(
+        &root,
+        &root,
+        catalog,
+        cancellation,
+        ProbePolicy::AllFiles,
+        progress,
+    )
 }
 
 fn scan_tree(
@@ -135,6 +170,7 @@ fn scan_tree(
     subtree: &Path,
     catalog: &mut Catalog,
     cancellation: &Cancellation,
+    policy: ProbePolicy,
     mut progress: impl FnMut(&ScanReport),
 ) -> Result<ScanReport> {
     let mut report = ScanReport::default();
@@ -155,7 +191,9 @@ fn scan_tree(
         &mut |candidate, report| {
             report.visited += 1;
             seen.push(candidate.source.clone());
-            if catalog.unchanged(&candidate.source, &candidate.stamp)? {
+            if matches!(policy, ProbePolicy::ChangedFiles)
+                && catalog.unchanged(&candidate.source, &candidate.stamp)?
+            {
                 report.unchanged += 1;
             } else if let Some(file) = probe(root, candidate, cancellation, report)? {
                 changed.push(file);
@@ -373,7 +411,14 @@ pub fn synchronize_path(
             } else {
                 0
             };
-            let mut result = scan_tree(&root, &canonical, catalog, cancellation, |_| {})?;
+            let mut result = scan_tree(
+                &root,
+                &canonical,
+                catalog,
+                cancellation,
+                ProbePolicy::ChangedFiles,
+                |_| {},
+            )?;
             result.removed += removed;
             return Ok(result);
         }

@@ -187,3 +187,55 @@ fn path_updates_cannot_escape_the_registered_root() {
     assert_eq!(catalog.search(&SearchQuery::All, 0).unwrap().total, 0);
     assert_eq!(fs::read(&outside).unwrap(), original);
 }
+
+#[test]
+fn event_loss_recovery_detects_timestamp_preserving_edits_and_avoids_noop_writes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("sounds");
+    fs::create_dir(&root).unwrap();
+    let file = root.join("sound.wav");
+    common::wave(&file, 8_000, 64);
+    let database = temporary.path().join("catalog.sqlite");
+    let mut catalog = Catalog::open(&database).unwrap();
+    library::scan(&root, &mut catalog, &Cancellation::default(), |_| {}).unwrap();
+    let stamp = fs::metadata(&file).unwrap().modified().unwrap();
+    common::wave(&file, 16_000, 64);
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(stamp))
+        .unwrap();
+    assert_eq!(
+        library::scan(&root, &mut catalog, &Cancellation::default(), |_| {})
+            .unwrap()
+            .indexed,
+        0
+    );
+    assert_eq!(
+        library::scan_after_event_loss(&root, &mut catalog, &Cancellation::default(), |_| {})
+            .unwrap()
+            .indexed,
+        1
+    );
+    assert_eq!(
+        catalog.search(&SearchQuery::All, 0).unwrap().rows[0]
+            .audio
+            .sample_rate,
+        Some(16_000)
+    );
+    let observer = rusqlite::Connection::open(&database).unwrap();
+    let version = || {
+        observer
+            .pragma_query_value(None, "data_version", |row| row.get::<_, i64>(0))
+            .unwrap()
+    };
+    let before = version();
+    assert_eq!(
+        library::scan_after_event_loss(&root, &mut catalog, &Cancellation::default(), |_| {})
+            .unwrap()
+            .indexed,
+        0
+    );
+    assert_eq!(before, version());
+}
