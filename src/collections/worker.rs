@@ -9,7 +9,11 @@ use std::thread::{self, JoinHandle};
 use super::favorites::Favorite;
 use crate::search::SearchQuery;
 
-use super::{Collection, CollectionId, Entry, EntryId, Page, Reference, Store};
+use super::{
+    Collection, CollectionId, Entry, EntryId, Page, Reference, ReferenceSelection, SelectionOrigin,
+    Store,
+};
+use crate::search::SourceSelection;
 
 #[derive(Clone, Debug)]
 pub enum Mutation {
@@ -26,6 +30,14 @@ pub enum Mutation {
         collection: CollectionId,
         references: Vec<Reference>,
     },
+    AddSelected {
+        collection: CollectionId,
+        selection: ReferenceSelection,
+    },
+    RemoveSelected {
+        collection: CollectionId,
+        selection: SourceSelection,
+    },
     Remove {
         collection: CollectionId,
         entry: EntryId,
@@ -35,9 +47,16 @@ pub enum Mutation {
 #[derive(Debug)]
 pub enum Change {
     FavoriteChanged(PathBuf),
-    FavoriteToggled { source: PathBuf, favorite: bool },
+    FavoriteToggled {
+        source: PathBuf,
+        favorite: bool,
+    },
     Created(CollectionId),
     Updated(CollectionId),
+    Removed {
+        collection: CollectionId,
+        sources: Vec<PathBuf>,
+    },
     Deleted(CollectionId),
 }
 
@@ -127,6 +146,14 @@ pub struct Worker {
 
 impl Worker {
     pub fn start(path: PathBuf, wake: impl Fn() + Send + 'static) -> std::io::Result<Self> {
+        Self::start_with_catalog(path, None, wake)
+    }
+
+    pub fn start_with_catalog(
+        path: PathBuf,
+        catalog_path: Option<PathBuf>,
+        wake: impl Fn() + Send + 'static,
+    ) -> std::io::Result<Self> {
         let (commands, jobs) = mpsc::sync_channel(4);
         let (sender, events) = mpsc::sync_channel(4);
         let favorites_generation = Arc::new(AtomicU64::new(0));
@@ -154,6 +181,10 @@ impl Worker {
                     }
                 };
                 let mut listening = sender.send(Event::Ready).is_ok();
+                // One lazy read-only connection, owned and closed by this actor.
+                // Accepted group edits resolve their inputs here and still drain
+                // on shutdown; no second UI round-trip is needed to commit them.
+                let mut catalog = None;
                 if listening {
                     wake();
                 }
@@ -273,6 +304,26 @@ impl Worker {
                                 } => store
                                     .add(collection, &references)
                                     .map(|()| Change::Updated(collection)),
+                                Mutation::AddSelected {
+                                    collection,
+                                    selection,
+                                } => resolve_references(
+                                    &mut store,
+                                    &mut catalog,
+                                    catalog_path.as_deref(),
+                                    &selection,
+                                )
+                                .and_then(|references| store.add(collection, &references))
+                                .map(|()| Change::Updated(collection)),
+                                Mutation::RemoveSelected {
+                                    collection,
+                                    selection,
+                                } => store
+                                    .remove_selected(collection, &selection)
+                                    .map(|sources| Change::Removed {
+                                        collection,
+                                        sources,
+                                    }),
                                 Mutation::Remove { collection, entry } => store
                                     .remove(collection, entry)
                                     .map(|()| Change::Updated(collection)),
@@ -403,6 +454,25 @@ impl Worker {
                 Err("Saved sound storage has stopped; reopen Sift to retry".into())
             }
         }
+    }
+}
+
+fn resolve_references(
+    store: &mut Store,
+    catalog: &mut Option<crate::catalog::Catalog>,
+    catalog_path: Option<&std::path::Path>,
+    selection: &ReferenceSelection,
+) -> super::Result<Vec<Reference>> {
+    if let SelectionOrigin::Library { query, scope } = &selection.origin {
+        if catalog.is_none() {
+            *catalog = Some(crate::catalog::Catalog::open_reader(
+                catalog_path.ok_or(super::Error::CatalogUnavailable)?,
+            )?);
+        }
+        let catalog = catalog.as_mut().ok_or(super::Error::CatalogUnavailable)?;
+        Ok(catalog.selected_references(query, scope, &selection.sources)?)
+    } else {
+        store.selected_references(selection)
     }
 }
 

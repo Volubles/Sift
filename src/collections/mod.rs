@@ -1,7 +1,9 @@
 //! Durable, source-preserving saved selections, independent of the audio index.
 
 pub mod favorites;
+mod selected;
 pub mod worker;
+pub use selected::{ReferenceSelection, SelectionOrigin};
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -81,6 +83,12 @@ pub struct Page<T> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Catalog access failed: {0}")]
+    Catalog(#[from] crate::Error),
+    #[error("Catalog access is unavailable for this selection")]
+    CatalogUnavailable,
+    #[error(transparent)]
+    Selection(#[from] crate::search::SelectionError),
     #[error("Saved sound storage failed: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("Source could not be read: {0}")]

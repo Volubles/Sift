@@ -173,7 +173,7 @@ fn validate_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn favorite_condition(query: &SearchQuery) -> (&'static str, Vec<Value>) {
+pub(super) fn favorite_condition(query: &SearchQuery) -> (&'static str, Vec<Value>) {
     let (condition, values) = match query {
         SearchQuery::All => ("1", vec![]),
         SearchQuery::FilenamePrefix { lower, upper } => (

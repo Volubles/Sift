@@ -1,6 +1,28 @@
 use crate::{Error, Result};
 
+pub(crate) mod batch;
 pub(crate) mod selection;
+
+pub const MAX_ACTION_SOUNDS: usize = 128;
+
+/// An immutable marked set, captured with its query and folder scope by the caller.
+#[derive(Clone, Debug)]
+pub enum SourceSelection {
+    Only(Vec<std::path::PathBuf>),
+    AllExcept(Vec<std::path::PathBuf>),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SelectionError {
+    #[error("Choose between 1 and {MAX_ACTION_SOUNDS} sounds")]
+    InvalidSize,
+    #[error("The selection exceeds its path or byte limit")]
+    InvalidPaths,
+    #[error("Some selected sounds are no longer in this view; refresh and select them again")]
+    Changed,
+    #[error("Selection storage failed: {0}")]
+    Database(#[from] rusqlite::Error),
+}
 
 #[derive(Debug)]
 pub enum SelectionSources {

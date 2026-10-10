@@ -19,6 +19,8 @@ mod path_codec;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Selection(#[from] search::SelectionError),
     #[error("File operation failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("Catalog operation failed: {0}")]

@@ -307,6 +307,36 @@ impl Catalog {
         )?)
     }
 
+    pub fn selected_references(
+        &mut self,
+        query: &SearchQuery,
+        scope: &Scope,
+        selection: &crate::search::SourceSelection,
+    ) -> Result<Vec<crate::collections::Reference>> {
+        let (condition, values) = search_condition(query, scope)?;
+        let transaction = self.connection.transaction()?;
+        let identities = crate::search::batch::selected_rows(
+            &transaction,
+            "samples s",
+            "s.name_key,s.id",
+            &condition,
+            values,
+            selection,
+        )?;
+        let references = {
+            let mut statement = transaction.prepare("SELECT id,source_path,name,path,format,size_bytes,duration_seconds,sample_rate,channels,bit_depth,metadata_error,modified_ns,created_ns FROM samples WHERE id=?1")?;
+            let mut references = Vec::with_capacity(identities.len());
+            for (id, _) in identities {
+                let mut rows = statement.query([id])?;
+                let row = rows.next()?.ok_or(crate::search::SelectionError::Changed)?;
+                references.push(crate::collections::Reference::from(&sample_from_row(row)?));
+            }
+            references
+        };
+        transaction.commit()?;
+        Ok(references)
+    }
+
     pub fn roots(&self) -> Result<Vec<PathBuf>> {
         let mut statement = self
             .connection
