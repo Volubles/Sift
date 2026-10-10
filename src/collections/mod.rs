@@ -81,7 +81,7 @@ pub struct Page<T> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Collection storage failed: {0}")]
+    #[error("Saved sound storage failed: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("Source could not be read: {0}")]
     Io(#[from] std::io::Error),
@@ -97,7 +97,7 @@ pub enum Error {
     NotFound,
     #[error("Invalid saved sound reference")]
     InvalidReference,
-    #[error("The source has changed since indexing; refresh its library before adding it")]
+    #[error("The source has changed since indexing; refresh its library before saving it")]
     SourceChanged,
     #[error("Choose between 1 and {PAGE_SIZE} sounds")]
     InvalidBatch,

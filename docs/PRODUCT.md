@@ -75,6 +75,13 @@ search failure in the UI.
 
 ## Collections and saving
 
+Favorites are global saved references with a star on Library and Collection
+sound rows and a dedicated rail view. Their status is shared across these views.
+The Favorites view has independent search, bounded results, source availability,
+preview, and copy-only dragging. Changes save automatically with visible failure
+and retry; removing a favorite preserves source audio and collection membership.
+Favorites survive restart, detached libraries, and rebuilding the catalog.
+
 Collections can be created, renamed, opened, and saved. They contain selected
 sounds, ordering, virtual folders, and optional export names and notes.
 Deleting a collection or item removes its references.

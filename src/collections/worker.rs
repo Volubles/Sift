@@ -130,58 +130,61 @@ impl Worker {
                     wake();
                 }
                 while let Ok(command) = jobs.recv() {
+                    let stale_read = match &command {
+                        Command::Favorites { generation, .. } => {
+                            *generation < favorites.load(Ordering::Acquire)
+                        }
+                        Command::FavoriteStatus { generation, .. } => {
+                            *generation < status.load(Ordering::Acquire)
+                        }
+                        Command::Groups { generation, .. } => {
+                            *generation < groups.load(Ordering::Acquire)
+                        }
+                        Command::Entries { generation, .. } => {
+                            *generation < entries.load(Ordering::Acquire)
+                        }
+                        Command::Mutate { .. } => false,
+                    };
+                    if !matches!(command, Command::Mutate { .. }) && (!listening || stale_read) {
+                        // A superseded read still frees command capacity. Wake the
+                        // UI so a query rejected by backpressure can retry.
+                        if listening {
+                            wake();
+                        }
+                        continue;
+                    }
                     let event = match command {
                         Command::Favorites {
                             generation,
                             query,
                             offset,
-                        } => {
-                            if !listening || generation < favorites.load(Ordering::Acquire) {
-                                continue;
-                            }
-                            Event::Favorites {
-                                generation,
-                                result: store
-                                    .favorites(&query, offset)
-                                    .map_err(|error| error.to_string()),
-                            }
-                        }
-                        Command::FavoriteStatus { generation, paths } => {
-                            if !listening || generation < status.load(Ordering::Acquire) {
-                                continue;
-                            }
-                            Event::FavoriteStatus {
-                                generation,
-                                result: store
-                                    .favorite_status(&paths)
-                                    .map_err(|error| error.to_string()),
-                            }
-                        }
-                        Command::Groups { generation, offset } => {
-                            if !listening || generation < groups.load(Ordering::Acquire) {
-                                continue;
-                            }
-                            Event::Groups {
-                                generation,
-                                result: store.list(offset).map_err(|error| error.to_string()),
-                            }
-                        }
+                        } => Event::Favorites {
+                            generation,
+                            result: store
+                                .favorites(&query, offset)
+                                .map_err(|error| error.to_string()),
+                        },
+                        Command::FavoriteStatus { generation, paths } => Event::FavoriteStatus {
+                            generation,
+                            result: store
+                                .favorite_status(&paths)
+                                .map_err(|error| error.to_string()),
+                        },
+                        Command::Groups { generation, offset } => Event::Groups {
+                            generation,
+                            result: store.list(offset).map_err(|error| error.to_string()),
+                        },
                         Command::Entries {
                             generation,
                             collection,
                             offset,
-                        } => {
-                            if !listening || generation < entries.load(Ordering::Acquire) {
-                                continue;
-                            }
-                            Event::Entries {
-                                generation,
-                                collection,
-                                result: store
-                                    .entries(collection, offset)
-                                    .map_err(|error| error.to_string()),
-                            }
-                        }
+                        } => Event::Entries {
+                            generation,
+                            collection,
+                            result: store
+                                .entries(collection, offset)
+                                .map_err(|error| error.to_string()),
+                        },
                         Command::Mutate {
                             operation,
                             mutation,
@@ -311,6 +314,54 @@ impl Drop for Worker {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn superseded_reads_wake_queries_rejected_by_a_full_command_queue() {
+        let directory = tempfile::tempdir().unwrap();
+        let (wake, signals) = mpsc::sync_channel(8);
+        let (release, gate) = mpsc::sync_channel(1);
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let worker = Worker::start(directory.path().join("saved.sqlite"), move || {
+            wake.send(()).unwrap();
+            if first.swap(false, Ordering::AcqRel) {
+                gate.recv().unwrap();
+            }
+        })
+        .unwrap();
+        signals.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(matches!(
+            worker
+                .events
+                .as_ref()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap(),
+            Event::Ready
+        ));
+        for offset in [0, 128, 256, 384] {
+            assert!(worker.favorites(1, SearchQuery::All, offset));
+        }
+        assert!(!worker.favorites(2, SearchQuery::All, 0));
+        release.send(()).unwrap();
+        // Each skipped query releases capacity and notifies the waiting caller.
+        for _ in 0..4 {
+            signals.recv_timeout(Duration::from_secs(3)).unwrap();
+        }
+        assert!(worker.favorites(2, SearchQuery::All, 0));
+        assert!(matches!(
+            worker
+                .events
+                .as_ref()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap(),
+            Event::Favorites {
+                generation: 2,
+                result: Ok(_)
+            }
+        ));
+        drop(worker);
+    }
 
     #[test]
     fn shutdown_drains_favorite_saves_and_removals_without_reading_results() {

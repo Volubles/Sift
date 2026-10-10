@@ -8,7 +8,7 @@ are core requirements.
 The prototype provides a native Windows metadata browser and a CLI. It indexes
 chosen folders into bundled SQLite/FTS5, searches bounded result pages, and
 shows named libraries and a folder browser, a compact audio table, waveforms,
-controlled audio preview, saved collections,
+controlled audio preview, saved collections, global favorites,
 and outgoing copy-only file dragging on Windows. This is not a finished
 application.
 
@@ -62,6 +62,10 @@ Use **Collections +** to create a saved selection; right-click its name to renam
 or delete it. **Add selected sound** or drag a library row onto a collection name
 to add a reference. Click a saved sound to preview it; right-click to remove its
 reference. Changes save automatically. **Details** toggles the metadata panel.
+Click a sound's star in Libraries or Collections to favorite it. The star icon
+in the left rail opens **Favorites** from all banks, with its own search and the
+same preview/copy workflow. Favorite changes save automatically; removing a star
+preserves collections and source audio. Missing favorites remain visible.
 Hold the left
 mouse button on a library row or **Drag copy to folder**, move into an Explorer
 folder, and release to offer a copy. Escape cancels the drag. Explorer handles
@@ -70,10 +74,9 @@ cancelled, and search runs independently from indexing. Selection is currently
 single-item.
 
 On Windows the catalog lives in `%LOCALAPPDATA%\Sift\catalog.sqlite`; it is
-independent of the executable and working directory. Library names/sources and
-collections are stored separately in `catalog.libraries.sqlite` and
-`catalog.collections.sqlite`, preserving user work through index
-rebuilds. Override with
+independent of the executable and working directory. Library registrations live
+in `catalog.libraries.sqlite`; collections and favorites share
+`catalog.collections.sqlite`. Both preserve user work through index rebuilds. Override with
 `--database PATH` for isolated experiments. The CLI-only configuration is
 available through `cargo run --locked --no-default-features -- index FOLDER`.
 
@@ -106,3 +109,6 @@ save-failure recovery, UI verification, and remaining checks.
 
 See [Libraries](docs/LIBRARIES.md) for named banks, native folder scopes, schema
 migration, source registration limits, and verification.
+
+See [Favorites](docs/FAVORITES.md) for global saved references, paging,
+membership synchronization, and verification limits.

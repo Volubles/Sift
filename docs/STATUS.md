@@ -26,8 +26,8 @@ and architecture documents describe the intended application.
 
 Playback and waveforms are now implemented with a bounded audio worker and
 derived waveform cache. Single-source copy-only native dragging is integrated
-on Windows. Saved collections are implemented. Tags, multi-selection, and application-managed export are
-not implemented yet. No CI
+on Windows. Saved collections and global favorites are implemented. Tags,
+multi-selection, and application-managed export are not implemented yet. No CI
 configuration exists yet. Active implementation branch: `prot/library-prototype`;
 check Git before assuming a branch in a future session.
 No remote, publishing, or distribution license has been selected.
@@ -46,12 +46,18 @@ No remote, publishing, or distribution license has been selected.
 
 ## Verification
 
-Favorites storage is implemented in durable collection schema 2 with independent
+Favorites are implemented in durable collection schema 2 with independent
 IDs/native references, transactional upgrade, indexed search, bounded membership
-reads, and shutdown-safe edits. Generated fixtures cover preservation across
-restart/index rebuild, collection deletion, missing sources, search/paging,
-migration failure, and unchanged originals. All 58 headless tests and headless
-Clippy pass. Desktop integration is the next checkpoint. See [Favorites](FAVORITES.md).
+reads, and shutdown-safe edits. Library/Collection rows share star status; the
+third rail icon opens the global virtualized Favorites view with independent
+search and existing preview/copy routes. Pending/failed edits remain visible
+for retry/discard; missing favorites remain saved and can be removed offline.
+The integrated suite passes 86 default-feature tests, 59 headless tests,
+formatting, Clippy, and a Windows release build. Real release captures of
+Libraries/Collections/Favorites were visually checked and five generated source hashes are
+unchanged. Physical star clicks, listening, and Favorite-to-Explorer drops remain
+manual checks; no new full performance qualification is claimed.
+See [Favorites](FAVORITES.md).
 
 The repository foundation was checked for UTF-8/line endings, local links,
 ignore behavior, and text/binary attributes. Review staged diffs at each
@@ -203,8 +209,9 @@ input and cannot qualify idle CPU.
 
 Next concrete step: verify bank creation, multiple source folders, subtree
 selection, Collections switching, and the revised Explorer handoff on disposable
-fixtures. Then add Favorites or explicit durable-source relinking, based on the
-next product checkpoint. Virtual collection folders, ordering, multi-selection, broader
+fixtures, including favorite toggling, restart, and Favorite-to-Explorer drops.
+Then implement explicit durable-source relinking and profile the remaining
+initial-indexing cost. Virtual collection folders, ordering, multi-selection, broader
 device tests, and performance qualification remain later checkpoints.
 Sift is still a prototype, not a finished sampler.
 

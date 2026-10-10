@@ -11,6 +11,7 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::audio::{player::Player, transport};
 use crate::catalog::{Sample, SampleId, SearchPage};
+use crate::collections::favorites::{Favorite, FavoriteId};
 use crate::collections::{
     Availability, Entry, EntryId, Reference, worker::Worker as CollectionWorker,
 };
@@ -22,6 +23,8 @@ use crate::worker::{Event, SourceRefresh, Workers};
 
 mod collections;
 use collections::{Action as CollectionAction, Collections};
+mod favorites;
+use favorites::{Action as FavoriteAction, star_button};
 mod libraries;
 use libraries::{Action as LibraryAction, Libraries};
 
@@ -30,12 +33,14 @@ enum Sidebar {
     #[default]
     Libraries,
     Collections,
+    Favorites,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SoundKey {
     Library(SampleId),
     Collection(EntryId),
+    Favorite(FavoriteId),
 }
 
 pub struct Options {
@@ -115,6 +120,7 @@ struct Browser {
     player: Player,
     drags: DragWorker,
     collections: Collections,
+    favorite_paths_dirty: bool,
     libraries: Libraries,
     sidebar: Sidebar,
     drag_error: Option<String>,
@@ -175,7 +181,16 @@ impl Browser {
             drags,
             collections,
             libraries: Libraries::default(),
-            sidebar: Sidebar::default(),
+            sidebar: if options.smoke_screenshot.is_some() {
+                match std::env::var("SIFT_SMOKE_VIEW").as_deref() {
+                    Ok("favorites") => Sidebar::Favorites,
+                    Ok("collections") => Sidebar::Collections,
+                    _ => Sidebar::default(),
+                }
+            } else {
+                Sidebar::default()
+            },
+            favorite_paths_dirty: true,
             drag_error: None,
             waveform: None,
             wave_generation: 0,
@@ -225,6 +240,7 @@ impl Browser {
     }
 
     fn refresh_query(&mut self) {
+        self.favorite_paths_dirty = true;
         self.generation += 1;
         self.pages.clear();
         self.pending.clear();
@@ -336,6 +352,7 @@ impl Browser {
                             self.select_sample(sample);
                         }
                         insert_page(&mut self.pages, page);
+                        self.favorite_paths_dirty = true;
                     }
                     Err(message) => {
                         self.pending.clear();
@@ -382,6 +399,13 @@ impl Browser {
                     if report.changed() {
                         self.refresh_query();
                     }
+                    self.collections.sources_changed(
+                        &touched
+                            .iter()
+                            .chain(&full_roots)
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    );
                     if self.selected.as_ref().is_some_and(|sound| {
                         touched
                             .iter()
@@ -437,6 +461,7 @@ impl Browser {
                             self.selected_key = Some(SoundKey::Library(sample.id));
                         }
                         self.selected = Some(Reference::from(&sample));
+                        self.favorite_paths_dirty = true;
                     }
                     if !availability.usable() {
                         self.wave_generation += 1;
@@ -487,6 +512,19 @@ impl Browser {
         {
             self.source_check = None;
         }
+        if self.favorite_paths_dirty || self.collections.favorite_paths_dirty {
+            let mut paths: BTreeSet<_> = self
+                .pages
+                .iter()
+                .flat_map(|page| &page.rows)
+                .map(|sample| sample.source.clone())
+                .collect();
+            if let Some(selected) = &self.selected {
+                paths.insert(selected.source.clone());
+            }
+            self.collections.track_favorites(paths);
+            self.favorite_paths_dirty = false;
+        }
         while let Some(ready) = self.waveforms.poll() {
             if ready.generation != self.wave_generation {
                 continue;
@@ -528,6 +566,14 @@ impl Browser {
         self.selected_stamp = stamp;
     }
 
+    fn select_favorite(&mut self, favorite: Favorite) {
+        self.select(
+            favorite.reference,
+            SoundKey::Favorite(favorite.id),
+            favorite.availability,
+        );
+    }
+
     fn select_entry(&mut self, entry: Entry) {
         self.select(
             entry.reference,
@@ -566,6 +612,7 @@ impl Browser {
             self.audio_error = Some(error.to_string());
         }
         self.selected = Some(sample);
+        self.favorite_paths_dirty = true;
         self.selected_key = Some(key);
         self.selected_availability = availability;
         self.selected_stamp = None;
@@ -776,33 +823,56 @@ impl Browser {
             });
         });
         ui.label(
-            RichText::new(format!("Browsing: {}", self.libraries.label()))
-                .small()
-                .color(Color32::from_rgb(135, 222, 194)),
+            RichText::new(format!(
+                "Browsing: {}",
+                if self.sidebar == Sidebar::Favorites {
+                    "Favorites".to_owned()
+                } else {
+                    self.libraries.label()
+                }
+            ))
+            .small()
+            .color(Color32::from_rgb(135, 222, 194)),
         );
         if !self.live_updates {
             ui.label(RichText::new(&self.watch_message).small().weak());
         }
         ui.add_space(12.0);
+        let favorites = self.sidebar == Sidebar::Favorites;
+        let query_text = if favorites {
+            &mut self.collections.favorites.query_text
+        } else {
+            &mut self.query_text
+        };
         let response = ui.add_sized(
             [ui.available_width(), 34.0],
-            egui::TextEdit::singleline(&mut self.query_text)
-                .hint_text("Search sounds by name or folder..."),
+            egui::TextEdit::singleline(query_text).hint_text("Search sounds by name or folder..."),
         );
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::F)) {
             response.request_focus();
         }
         if response.changed() {
-            self.reset_query();
+            if favorites {
+                self.collections.favorites.reset_query();
+            } else {
+                self.reset_query();
+            }
         }
         ui.horizontal(|ui| {
-            let count_label = if self.query_text.is_empty() {
+            let total = if favorites {
+                self.collections.favorites.total
+            } else {
+                self.total
+            };
+            let count_label = if favorites {
+                "favorites"
+            } else if self.query_text.is_empty() {
                 "indexed sounds"
             } else {
                 "matching sounds"
             };
             ui.label(
-                RichText::new(format!("{} {count_label}", self.total))
+                RichText::new(format!("{total} {count_label}"))
                     .small()
                     .weak(),
             );
@@ -816,6 +886,7 @@ impl Browser {
         if let Some(message) = &self.error {
             ui.colored_label(Color32::from_rgb(245, 143, 140), message);
         }
+        self.collections.favorite_feedback(ui);
         if self.drags.busy() {
             ui.horizontal(|ui| {
                 ui.label(if self.drags.native_active() {
@@ -1008,6 +1079,7 @@ impl Browser {
             _ => None,
         };
         let mut drag_sample = None;
+        let mut favorite = None;
         table_heading(ui);
         egui::ScrollArea::vertical()
             .id_salt(("samples", self.view_generation))
@@ -1022,7 +1094,21 @@ impl Browser {
                         .find(|page| page.offset == offset)
                         .and_then(|page| page.rows.get(index - offset))
                     {
-                        let response = table_row(ui, sample, selected_id == Some(sample.id), index);
+                        let response = ui
+                            .horizontal(|ui| {
+                                if star_button(
+                                    ui,
+                                    self.collections.favorites.status(&sample.source),
+                                    self.collections.favorites.can_edit(),
+                                    &sample.name,
+                                )
+                                .clicked()
+                                {
+                                    favorite = Some(Reference::from(sample));
+                                }
+                                table_row(ui, sample, selected_id == Some(sample.id), index)
+                            })
+                            .inner;
                         let clicked = response.clicked().then(|| sample.clone());
                         if DragWorker::supported()
                             && !self.drags.busy()
@@ -1045,6 +1131,9 @@ impl Browser {
                     }
                 }
             });
+        if let Some(reference) = favorite {
+            self.collections.toggle_favorite(&reference);
+        }
         if let Some(sample) = drag_sample {
             let reference = Reference::from(&sample);
             self.select_sample(sample);
@@ -1061,7 +1150,8 @@ impl Browser {
         };
         if self.ready
             && self.collections.settled()
-            && self.libraries.settled()
+            && self.collections.favorites.settled()
+            && (self.sidebar != Sidebar::Libraries || self.libraries.settled())
             && self.scan.is_none()
             && !self.wave_pending
             && !self.pages.is_empty()
@@ -1128,6 +1218,7 @@ fn navigation_button(ui: &mut egui::Ui, mode: Sidebar, selected: bool) -> egui::
     let name = match mode {
         Sidebar::Libraries => "Libraries",
         Sidebar::Collections => "Collections",
+        Sidebar::Favorites => "Favorites",
     };
     let response = ui
         .add_sized([32.0, 38.0], egui::Button::new("").selected(selected))
@@ -1163,6 +1254,20 @@ fn navigation_button(ui: &mut egui::Ui, mode: Sidebar, selected: bool) -> egui::
                 (2.0, color),
             );
         }
+        Sidebar::Favorites => {
+            let points: Vec<_> = (0..10)
+                .map(|point| {
+                    let angle =
+                        std::f32::consts::TAU * point as f32 / 10.0 - std::f32::consts::FRAC_PI_2;
+                    let radius = if point % 2 == 0 { 11.0 } else { 5.0 };
+                    centre + egui::vec2(angle.cos(), angle.sin()) * radius
+                })
+                .collect();
+            painter.add(egui::Shape::closed_line(
+                points,
+                egui::Stroke::new(1.5, color),
+            ));
+        }
         Sidebar::Collections => {
             for row in 0..3 {
                 for column in 0..3 {
@@ -1183,6 +1288,8 @@ fn navigation_button(ui: &mut egui::Ui, mode: Sidebar, selected: bool) -> egui::
 fn table_heading(ui: &mut egui::Ui) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+    let mut rect = rect;
+    rect.min.x += 34.0;
     paint_columns(
         ui,
         rect,
@@ -1198,7 +1305,53 @@ fn table_heading(ui: &mut egui::Ui) {
     ui.separator();
 }
 
+struct SoundRow<'a> {
+    name: &'a str,
+    format: &'a str,
+    audio: &'a crate::library::AudioMetadata,
+}
+
 fn table_row(ui: &mut egui::Ui, sound: &Sample, selected: bool, index: usize) -> egui::Response {
+    sound_row(
+        ui,
+        SoundRow {
+            name: &sound.name,
+            format: &sound.format,
+            audio: &sound.audio,
+        },
+        &Availability::Ready,
+        selected,
+        index,
+    )
+}
+
+fn reference_row(
+    ui: &mut egui::Ui,
+    sound: &Reference,
+    availability: &Availability,
+    selected: bool,
+    index: usize,
+) -> egui::Response {
+    sound_row(
+        ui,
+        SoundRow {
+            name: &sound.name,
+            format: &sound.format,
+            audio: &sound.audio,
+        },
+        availability,
+        selected,
+        index,
+    )
+}
+
+fn sound_row(
+    ui: &mut egui::Ui,
+    sound: SoundRow<'_>,
+    availability: &Availability,
+    selected: bool,
+    index: usize,
+) -> egui::Response {
     let response = ui.add_sized(
         [ui.available_width(), 28.0],
         sample_button(String::new(), selected),
@@ -1208,7 +1361,7 @@ fn table_row(ui: &mut egui::Ui, sound: &Sample, selected: bool, index: usize) ->
             egui::WidgetType::Button,
             ui.is_enabled(),
             selected,
-            &sound.name,
+            sound.name,
         )
     });
     if !selected && !response.hovered() && index.is_multiple_of(2) {
@@ -1216,7 +1369,16 @@ fn table_row(ui: &mut egui::Ui, sound: &Sample, selected: bool, index: usize) ->
             .rect_filled(response.rect, 0.0, Color32::from_rgb(37, 39, 40));
     }
     let columns = [
-        sound.name.clone(),
+        format!(
+            "{}{}",
+            match availability {
+                Availability::Ready => "",
+                Availability::Changed => "Changed · ",
+                Availability::Missing => "Missing · ",
+                Availability::Unavailable(_) => "Unavailable · ",
+            },
+            sound.name
+        ),
         sound.format.to_uppercase(),
         sound
             .audio
@@ -1330,6 +1492,9 @@ impl eframe::App for Browser {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.rendered_frames += 1;
+        self.collections
+            .favorites
+            .set_active(self.sidebar == Sidebar::Favorites);
         self.input_events += ui.input(|input| input.events.len()) as u64;
         let ctx = ui.ctx().clone();
         if self.drags.busy()
@@ -1341,7 +1506,7 @@ impl eframe::App for Browser {
         egui::Panel::bottom("footer").show(ui, |ui| {
             ui.label(
                 RichText::new(
-                    "Source files stay in place. Collections save references automatically.",
+                    "Source files stay in place. Collections and favorites save automatically.",
                 )
                 .small()
                 .weak(),
@@ -1351,9 +1516,12 @@ impl eframe::App for Browser {
             .resizable(false)
             .exact_size(44.0)
             .show(ui, |ui| {
-                for mode in [Sidebar::Libraries, Sidebar::Collections] {
+                for mode in [Sidebar::Libraries, Sidebar::Collections, Sidebar::Favorites] {
                     if navigation_button(ui, mode, self.sidebar == mode).clicked() {
                         self.sidebar = mode;
+                        self.collections
+                            .favorites
+                            .set_active(mode == Sidebar::Favorites);
                     }
                 }
             });
@@ -1369,6 +1537,14 @@ impl eframe::App for Browser {
                             LibraryAction::Scan(folder) => self.begin_scan(folder),
                         }
                     }
+                    return;
+                }
+                if self.sidebar == Sidebar::Favorites {
+                    ui.heading("Favorites");
+                    ui.separator();
+                    ui.label("Starred sounds from all libraries and collections.");
+                    ui.label("Drag a sound out to copy it, or switch to Collections to save the selected sound there.");
+                    if ui.button("Refresh favorites").clicked() { self.collections.favorites.reset_query(); }
                     return;
                 }
                 let selected_entry = match self.selected_key {
@@ -1397,7 +1573,26 @@ impl eframe::App for Browser {
                 .default_size(300.0)
                 .show(ui, |ui| self.details(ui));
         }
-        egui::CentralPanel::default().show(ui, |ui| self.list(ui));
+        egui::CentralPanel::default().show(ui, |ui| {
+            if self.sidebar == Sidebar::Favorites {
+                let selected = match self.selected_key {
+                    Some(SoundKey::Favorite(id)) => Some(id),
+                    _ => None,
+                };
+                if let Some(action) = self.collections.favorite_list(ui, selected) {
+                    match action {
+                        FavoriteAction::Select(sound) => self.select_favorite(sound),
+                        FavoriteAction::Drag(sound) => {
+                            let reference = sound.reference.clone();
+                            self.select_favorite(sound);
+                            egui::DragAndDrop::set_payload(&ctx, reference);
+                        }
+                    }
+                }
+            } else {
+                self.list(ui);
+            }
+        });
         if !self.drags.busy()
             && DragWorker::supported()
             && ctx.input(external_drag_requested)

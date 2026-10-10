@@ -1,3 +1,6 @@
+use std::{collections::BTreeSet, path::PathBuf};
+
+use super::favorites::{Favorites, star_button};
 use eframe::egui::{self, Color32, RichText};
 
 use crate::collections::{
@@ -7,6 +10,8 @@ use crate::collections::{
 
 pub(super) struct Collections {
     worker: Worker,
+    pub(super) favorites: Favorites,
+    pub(super) favorite_paths_dirty: bool,
     ready: bool,
     groups: Option<Page<Collection>>,
     groups_generation: u64,
@@ -52,6 +57,8 @@ impl Collections {
     pub(super) fn new(worker: Worker) -> Self {
         Self {
             worker,
+            favorites: Favorites::default(),
+            favorite_paths_dirty: true,
             ready: false,
             groups: None,
             groups_generation: 0,
@@ -85,7 +92,15 @@ impl Collections {
                     self.ready = true;
                     self.refresh_groups();
                 }
+                Event::Favorites { generation, result } => self.favorites.page(generation, result),
+                Event::FavoriteStatus { generation, result } => {
+                    self.favorites.membership(generation, result)
+                }
+                Event::Saved { operation, result } if self.favorites.owns_save(operation) => {
+                    self.favorites.saved(result)
+                }
                 Event::StartupFailed(error) => {
+                    self.favorites.startup_failed(&error);
                     eprintln!("Collection storage startup failed: {error}");
                     self.error = Some(format!("Collections unavailable: {error}"));
                 }
@@ -125,6 +140,7 @@ impl Collections {
                                 continue;
                             }
                             self.entries = Some(page);
+                            self.favorite_paths_dirty = true;
                             self.error = None;
                         }
                         Err(error) => {
@@ -156,6 +172,7 @@ impl Collections {
                                     self.refresh_entries()
                                 }
                                 Change::Deleted(id) if self.active == Some(id) => {
+                                    self.favorite_paths_dirty = true;
                                     self.active = None;
                                     self.entries = None;
                                     self.entries_generation += 1;
@@ -176,6 +193,7 @@ impl Collections {
             }
         }
         self.request_pages();
+        self.favorites.request(&self.worker, self.ready);
     }
 
     fn activate(&mut self, id: CollectionId) {
@@ -191,6 +209,7 @@ impl Collections {
         self.groups_failed = false;
     }
     fn refresh_entries(&mut self) {
+        self.favorite_paths_dirty = true;
         self.entries_generation += 1;
         self.entries = None;
         self.entries_pending = false;
@@ -233,6 +252,49 @@ impl Collections {
             mutation,
             error,
         });
+    }
+
+    pub(super) fn track_favorites(&mut self, mut paths: BTreeSet<PathBuf>) {
+        self.favorite_paths_dirty = false;
+        if let Some(page) = &self.entries {
+            paths.extend(page.rows.iter().map(|entry| entry.reference.source.clone()));
+        }
+        self.favorites.track(paths);
+        self.favorites.request(&self.worker, self.ready);
+    }
+
+    pub(super) fn toggle_favorite(&mut self, reference: &Reference) {
+        if self.ready {
+            self.favorites
+                .toggle(&self.worker, &mut self.operation, reference);
+        }
+    }
+
+    pub(super) fn favorite_feedback(&mut self, ui: &mut egui::Ui) {
+        self.favorites
+            .feedback(ui, &self.worker, &mut self.operation);
+    }
+
+    pub(super) fn favorite_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected: Option<crate::collections::favorites::FavoriteId>,
+    ) -> Option<super::favorites::Action> {
+        self.favorites
+            .list(ui, &self.worker, &mut self.operation, self.ready, selected)
+    }
+
+    pub(super) fn sources_changed(&mut self, paths: &[PathBuf]) {
+        self.favorites.sources_changed(paths);
+        if self.entries.as_ref().is_some_and(|page| {
+            page.rows.iter().any(|entry| {
+                paths
+                    .iter()
+                    .any(|path| entry.reference.source.starts_with(path))
+            })
+        }) {
+            self.refresh_entries();
+        }
     }
 
     pub(super) fn selected_update(&self, id: EntryId) -> Option<&Entry> {
@@ -371,6 +433,7 @@ impl Collections {
         }
         let mut action = None;
         let mut remove = None;
+        let mut favorite = None;
         if let Some(collection) = self.active {
             ui.horizontal(|ui| {
                 if ui
@@ -411,34 +474,54 @@ impl Collections {
                                 Availability::Missing => "Missing · ",
                                 Availability::Unavailable(_) => "Unavailable · ",
                             };
-                            let response = ui.add_sized(
-                                [ui.available_width(), 28.0],
-                                egui::Button::new(format!("{}{}", status, entry.reference.name))
+                            ui.horizontal(|ui| {
+                                let membership = self.favorites.status(&entry.reference.source);
+                                if star_button(
+                                    ui,
+                                    membership,
+                                    self.ready
+                                        && self.favorites.can_edit()
+                                        && (membership == Some(true)
+                                            || entry.availability.usable()),
+                                    &entry.reference.name,
+                                )
+                                .clicked()
+                                {
+                                    favorite = Some(entry.reference.clone());
+                                }
+                                let response = ui.add_sized(
+                                    [ui.available_width(), 28.0],
+                                    egui::Button::new(format!(
+                                        "{}{}",
+                                        status, entry.reference.name
+                                    ))
                                     .truncate()
                                     .selected(selected_entry == Some(entry.id))
                                     .sense(egui::Sense::click_and_drag()),
-                            );
-                            if response.clicked() {
-                                action = Some(Action::Select(entry.clone()));
-                            }
-                            if entry.availability.usable()
-                                && response.drag_started_by(egui::PointerButton::Primary)
-                            {
-                                action = Some(Action::Drag(entry.clone()));
-                            }
-                            response.context_menu(|ui| {
-                                if ui
-                                    .add_enabled(
-                                        can_edit,
-                                        egui::Button::new("Remove from collection"),
-                                    )
-                                    .clicked()
-                                {
-                                    remove = Some(entry.id);
-                                    ui.close();
+                                );
+                                if response.clicked() {
+                                    action = Some(Action::Select(entry.clone()));
                                 }
+                                if entry.availability.usable()
+                                    && response.drag_started_by(egui::PointerButton::Primary)
+                                {
+                                    action = Some(Action::Drag(entry.clone()));
+                                }
+                                response.context_menu(|ui| {
+                                    if ui
+                                        .add_enabled(
+                                            can_edit,
+                                            egui::Button::new("Remove from collection"),
+                                        )
+                                        .clicked()
+                                    {
+                                        remove = Some(entry.id);
+                                        ui.close();
+                                    }
+                                });
+                                response
+                                    .on_hover_text(entry.reference.source.display().to_string());
                             });
-                            response.on_hover_text(entry.reference.source.display().to_string());
                         }
                     });
                 let total = page.total;
@@ -459,6 +542,9 @@ impl Collections {
             }
         } else {
             ui.label("Choose a collection.");
+        }
+        if let Some(reference) = favorite {
+            self.toggle_favorite(&reference);
         }
         if let Some(error) = &self.error {
             ui.colored_label(Color32::from_rgb(245, 143, 140), error);
@@ -627,12 +713,78 @@ mod tests {
                 && panel.groups.is_some()
                 && (panel.active.is_none() || panel.entries.is_some())
                 && !panel.saving()
+                && panel.favorites.settled()
             {
                 return;
             }
             signals.recv_timeout(Duration::from_secs(3)).unwrap();
         }
         panic!("Collections did not settle after bounded notifications");
+    }
+
+    #[test]
+    fn favorite_edits_share_status_with_collections_and_keep_offline_references() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("saved.sqlite");
+        let source = directory.path().join("sound.wav");
+        std::fs::write(&source, b"fixture").unwrap();
+        let reference = Reference {
+            source: source.clone(),
+            name: "sound.wav".into(),
+            display_path: "sound.wav".into(),
+            format: "wav".into(),
+            size_bytes: 7,
+            audio: Default::default(),
+            metadata_error: None,
+        };
+        let (wake, signals) = mpsc::sync_channel(32);
+        let mut panel =
+            Collections::new(Worker::start(path.clone(), move || wake.send(()).unwrap()).unwrap());
+        settle(&mut panel, &signals);
+        panel.mutate(Mutation::Create("Film".into()));
+        settle(&mut panel, &signals);
+        panel.mutate(Mutation::Add {
+            collection: panel.active.unwrap(),
+            references: vec![reference.clone()],
+        });
+        settle(&mut panel, &signals);
+        panel.track_favorites([source.clone()].into_iter().collect());
+        settle(&mut panel, &signals);
+        assert_eq!(panel.favorites.status(&source), Some(false));
+        panel.toggle_favorite(&reference);
+        assert_eq!(panel.favorites.status(&source), Some(false));
+        settle(&mut panel, &signals);
+        assert_eq!(
+            panel
+                .favorites
+                .status(&panel.entries.as_ref().unwrap().rows[0].reference.source),
+            Some(true)
+        );
+        panel.favorites.set_active(true);
+        settle(&mut panel, &signals);
+        assert_eq!(panel.favorites.total, 1);
+        std::fs::remove_file(&source).unwrap();
+        panel.sources_changed(std::slice::from_ref(&source));
+        settle(&mut panel, &signals);
+        assert_eq!(
+            panel.entries.as_ref().unwrap().rows[0].availability,
+            Availability::Missing
+        );
+        panel.toggle_favorite(&reference);
+        settle(&mut panel, &signals);
+        assert_eq!(panel.favorites.total, 0);
+        assert_eq!(panel.favorites.status(&source), Some(false));
+        assert_eq!(panel.entries.as_ref().unwrap().total, 1);
+        drop(panel);
+        let mut store = crate::collections::Store::open(&path).unwrap();
+        assert_eq!(
+            store
+                .favorites(&crate::search::SearchQuery::All, 0)
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(store.list(0).unwrap().rows[0].count, 1);
     }
 
     #[test]
