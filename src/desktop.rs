@@ -28,8 +28,10 @@ use favorites::{Action as FavoriteAction, star_button};
 mod libraries;
 mod preview;
 use preview::Preview;
+mod selection;
 mod sound_table;
 use libraries::{Action as LibraryAction, Libraries};
+use selection::{Gesture, Selection};
 use sound_table::{table_heading, table_row};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -121,6 +123,7 @@ fn selected_renderer() -> eframe::Result<eframe::Renderer> {
 struct Browser {
     workers: Workers,
     preview: Preview,
+    selection: Selection,
     drags: DragWorker,
     collections: Collections,
     favorite_paths_dirty: bool,
@@ -167,6 +170,7 @@ impl Browser {
         Self {
             workers,
             preview: Preview::new(waveforms, player),
+            selection: Selection::default(),
             drags,
             collections,
             libraries: Libraries::default(),
@@ -213,12 +217,16 @@ impl Browser {
     }
 
     fn reset_query(&mut self) {
+        self.selection.reset();
         self.view_generation += 1;
         self.total = 0;
         self.refresh_query();
     }
 
     fn refresh_query(&mut self) {
+        self.selection.refresh();
+        self.workers
+            .invalidate_selection(self.selection.generation());
         self.favorite_paths_dirty = true;
         self.generation += 1;
         self.pages.clear();
@@ -295,6 +303,9 @@ impl Browser {
         }
         while let Some(event) = self.workers.try_event() {
             match event {
+                Event::Selection { generation, result } => {
+                    self.selection.resolved(generation, result)
+                }
                 Event::Ready => {
                     self.ready = true;
                     self.request_page(0);
@@ -335,6 +346,16 @@ impl Browser {
                         self.total = page.total;
                         self.pending.remove(&page.offset);
                         self.preview.refresh_catalog(&page.rows);
+                        for (position, sample) in page.rows.iter().enumerate() {
+                            self.selection.observe(
+                                SoundKey::Library(sample.id),
+                                page.offset + position,
+                                &sample.source,
+                            );
+                            if self.selection.active_source() == Some(sample.source.as_path()) {
+                                self.selection.remember(Reference::from(sample));
+                            }
+                        }
                         insert_page(&mut self.pages, page);
                         self.favorite_paths_dirty = true;
                     }
@@ -660,16 +681,28 @@ impl Browser {
             return;
         }
         let mut needed = BTreeSet::new();
-        let selected_id = match self.preview.key() {
-            Some(SoundKey::Library(id)) => Some(id),
-            _ => None,
-        };
+        let focus_id = ui.make_persistent_id("library-sound-focus");
+        let favorite_key = self.selection.keyboard(ui, focus_id, self.total);
+        let target = self.selection.target();
+        let mut choice = target.and_then(|(index, gesture)| {
+            self.pages
+                .iter()
+                .find(|page| index >= page.offset && index < page.offset + page.rows.len())
+                .and_then(|page| page.rows.get(index - page.offset))
+                .map(|sample| (sample.clone(), index, gesture))
+        });
         let mut drag_sample = None;
         let mut favorite = None;
+        self.selection.feedback(ui, self.total);
         table_heading(ui);
-        egui::ScrollArea::vertical()
-            .id_salt(("samples", self.view_generation))
-            .auto_shrink([false, false])
+        self.selection
+            .scroll_area(
+                ui,
+                egui::ScrollArea::vertical()
+                    .id_salt(("samples", self.view_generation))
+                    .auto_shrink([false, false]),
+                0,
+            )
             .show_rows(ui, 28.0, self.total, |ui, range| {
                 for index in range {
                     let offset = index / PAGE_SIZE * PAGE_SIZE;
@@ -680,6 +713,13 @@ impl Browser {
                         .find(|page| page.offset == offset)
                         .and_then(|page| page.rows.get(index - offset))
                     {
+                        let key = SoundKey::Library(sample.id);
+                        if self.preview.key() == Some(key) {
+                            self.selection.seed(key, index, &sample.source);
+                            if self.selection.reference().is_none() {
+                                self.selection.remember(Reference::from(sample));
+                            }
+                        }
                         let response = ui
                             .horizontal(|ui| {
                                 if star_button(
@@ -692,23 +732,37 @@ impl Browser {
                                 {
                                     favorite = Some(Reference::from(sample));
                                 }
-                                table_row(ui, sample, selected_id == Some(sample.id), index)
+                                table_row(
+                                    ui,
+                                    sample,
+                                    self.selection.contains(&sample.source, index),
+                                    index,
+                                )
                             })
                             .inner;
-                        let clicked = response.clicked().then(|| sample.clone());
+                        selection::active_outline(
+                            ui,
+                            &response,
+                            self.selection.active_source() == Some(sample.source.as_path()),
+                        );
+                        if response.clicked() {
+                            choice = Some((
+                                sample.clone(),
+                                index,
+                                Gesture::from_modifiers(ui.input(|input| input.modifiers)),
+                            ));
+                            selection::focus(ui, focus_id);
+                        }
                         if DragWorker::supported()
                             && !self.drags.busy()
                             && response.drag_started_by(egui::PointerButton::Primary)
                         {
-                            drag_sample = Some(sample.clone());
+                            drag_sample = Some((sample.clone(), index));
                         }
                         response.on_hover_text(format!(
                             "{}\nDrag to a collection, or out to copy the source file.",
                             sample.display_path
                         ));
-                        if let Some(sample) = clicked {
-                            self.select_sample(sample);
-                        }
                     } else {
                         ui.add_sized(
                             [ui.available_width(), 32.0],
@@ -720,13 +774,52 @@ impl Browser {
         if let Some(reference) = favorite {
             self.collections.toggle_favorite(&reference);
         }
-        if let Some(sample) = drag_sample {
+        if let Some((sample, index, gesture)) = choice {
+            self.selection
+                .choose(SoundKey::Library(sample.id), index, &sample.source, gesture);
+            self.selection.remember(Reference::from(&sample));
+            self.select_sample(sample);
+        }
+        if favorite_key
+            && let Some(reference) = self
+                .preview
+                .selected()
+                .filter(|reference| {
+                    self.selection.active_source() == Some(reference.source.as_path())
+                })
+                .or_else(|| self.selection.reference())
+        {
+            self.collections.toggle_favorite(reference);
+        }
+        if let Some((sample, index)) = drag_sample {
+            let key = SoundKey::Library(sample.id);
+            if !self.selection.contains(&sample.source, index) {
+                self.selection
+                    .choose(key, index, &sample.source, Gesture::Replace);
+            }
+            self.selection.activate(key, index, &sample.source);
+            selection::focus(ui, focus_id);
             let reference = Reference::from(&sample);
+            self.selection.remember(reference.clone());
             self.select_sample(sample);
             egui::DragAndDrop::set_payload(ui.ctx(), reference);
         }
         for offset in needed {
             self.request_page(offset);
+        }
+        if let Some((index, _)) = target {
+            self.request_page(index / PAGE_SIZE * PAGE_SIZE);
+        }
+        if let Some(request) = self.selection.request()
+            && self.workers.selection(
+                request.generation,
+                self.query.clone(),
+                self.libraries.scope(),
+                request.anchor,
+                request.target,
+            )
+        {
+            self.selection.sent();
         }
     }
 
@@ -1019,7 +1112,10 @@ impl eframe::App for Browser {
                     Some(SoundKey::Favorite(id)) => Some(id),
                     _ => None,
                 };
-                if let Some(action) = self.collections.favorite_list(ui, selected) {
+                if let Some(action) =
+                    self.collections
+                        .favorite_list(ui, selected, self.preview.selected())
+                {
                     match action {
                         FavoriteAction::Select(sound) => self.select_favorite(sound),
                         FavoriteAction::Drag(sound) => {
@@ -1055,7 +1151,10 @@ impl eframe::App for Browser {
                 Color32::from_rgb(135, 222, 194),
             );
         }
-        if !ctx.egui_wants_keyboard_input()
+        if !egui::Popup::is_any_open(&ctx)
+            && (!ctx.egui_wants_keyboard_input()
+                || self.selection.has_focus(&ctx)
+                || self.collections.sound_has_focus(&ctx))
             && (self.sidebar != Sidebar::Libraries || !self.libraries.tree_has_focus(&ctx))
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
         {

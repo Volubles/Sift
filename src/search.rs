@@ -1,5 +1,14 @@
 use crate::{Error, Result};
 
+pub(crate) mod selection;
+
+#[derive(Debug)]
+pub enum SelectionSources {
+    Ready(Vec<std::path::PathBuf>),
+    MissingEndpoint,
+    TooLarge,
+}
+
 pub const PAGE_SIZE: usize = 128;
 const MAX_QUERY_CHARS: usize = 256;
 

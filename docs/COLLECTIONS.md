@@ -11,6 +11,10 @@ a selection; context menus rename or delete it. **Add selected sound** or a drag
 onto a collection name adds the selected reference. Saved items can be previewed
 and removed through their context menu.
 
+Contents support [multiple marks and keyboard navigation](SELECTION.md).
+W/S and Up/Down cross page boundaries; F toggles the active sound's favorite.
+Adds, removals, and outgoing dragging still act on one sound.
+
 Edits save automatically. Conflicting actions are disabled while saving. Failed
 edits retain their mutation and name draft for retry or explicit discard. Read
 failures remain visible and can be retried. The first collection opens initially;
@@ -47,7 +51,7 @@ sources. Missing references remain saved.
 
 Revision checks use size and available modification timestamps, not content
 hashes. Automatic relinking, transcoding, virtual collection folders, item
-reordering, multi-selection, and portable import/export are not implemented.
+reordering, group editing/copy dragging, and portable import/export are not implemented.
 
 ## Qualification
 

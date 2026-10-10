@@ -11,9 +11,14 @@ use crate::collections::{
 use crate::search::{PAGE_SIZE, SearchQuery};
 
 use super::sound_table::{reference_row, table_heading};
+use super::{
+    SoundKey,
+    selection::{self, Gesture, Selection},
+};
 
 #[derive(Default)]
 pub(super) struct Favorites {
+    selection: Selection,
     pub(super) query_text: String,
     query: SearchQuery,
     generation: u64,
@@ -44,11 +49,15 @@ pub(super) enum Action {
 }
 
 impl Favorites {
+    pub(super) fn has_focus(&self, context: &egui::Context) -> bool {
+        self.selection.has_focus(context)
+    }
     pub(super) fn set_active(&mut self, active: bool) {
         self.active = active;
     }
 
     pub(super) fn reset_query(&mut self) {
+        self.selection.reset();
         self.view_generation += 1;
         self.total = 0;
         self.refresh();
@@ -62,6 +71,7 @@ impl Favorites {
     }
 
     fn refresh(&mut self) {
+        self.selection.refresh();
         self.generation += 1;
         self.pages.clear();
         self.pending.clear();
@@ -92,6 +102,7 @@ impl Favorites {
     }
 
     pub(super) fn request(&mut self, worker: &Worker, ready: bool) {
+        worker.invalidate_favorite_selection(self.selection.generation());
         if !ready {
             return;
         }
@@ -128,6 +139,13 @@ impl Favorites {
             Ok(page) => {
                 self.total = page.total;
                 self.pending.remove(&page.offset);
+                for (position, sound) in page.rows.iter().enumerate() {
+                    self.selection.observe(
+                        SoundKey::Favorite(sound.id),
+                        page.offset + position,
+                        &sound.reference.source,
+                    );
+                }
                 self.pages.retain(|cached| cached.offset != page.offset);
                 self.pages.push_back(page);
                 while self.pages.len() > 4 {
@@ -164,6 +182,14 @@ impl Favorites {
         }
     }
 
+    pub(super) fn selection_result(
+        &mut self,
+        generation: u64,
+        result: Result<crate::search::SelectionSources, String>,
+    ) {
+        self.selection.resolved(generation, result);
+    }
+
     pub(super) fn can_edit(&self) -> bool {
         self.save.is_none()
     }
@@ -185,7 +211,7 @@ impl Favorites {
         let mutation = match self.status(&reference.source) {
             Some(true) => Mutation::Unfavorite(reference.source.clone()),
             Some(false) => Mutation::Favorite(reference.clone()),
-            None => return,
+            None => Mutation::ToggleFavorite(reference.clone()),
         };
         self.mutate(worker, operation, mutation);
     }
@@ -213,14 +239,10 @@ impl Favorites {
                     .save
                     .as_ref()
                     .is_some_and(|save| matches!(save.mutation, Mutation::Favorite(_)));
-                self.save = None;
-                // Discard older membership replies before publishing the committed value.
-                self.invalidate_status();
-                self.status_needed = !self.desired.is_empty();
-                if self.desired.contains(&source) {
-                    self.status.insert(source, is_favorite);
-                }
-                self.refresh();
+                self.favorite_committed(source, is_favorite);
+            }
+            Ok(Change::FavoriteToggled { source, favorite }) => {
+                self.favorite_committed(source, favorite)
             }
             Ok(_) => {
                 self.error = Some(
@@ -235,6 +257,20 @@ impl Favorites {
                 }
             }
         }
+    }
+
+    fn favorite_committed(&mut self, source: PathBuf, is_favorite: bool) {
+        if !is_favorite {
+            self.selection.forget(&source);
+        }
+        self.save = None;
+        // Discard older membership replies before publishing the committed value.
+        self.invalidate_status();
+        self.status_needed = !self.desired.is_empty();
+        if self.desired.contains(&source) {
+            self.status.insert(source, is_favorite);
+        }
+        self.refresh();
     }
 
     pub(super) fn sources_changed(&mut self, paths: &[PathBuf]) {
@@ -286,6 +322,7 @@ impl Favorites {
         operation: &mut u64,
         ready: bool,
         selected: Option<FavoriteId>,
+        active_reference: Option<&Reference>,
     ) -> Option<Action> {
         ui.heading("Favorites");
         ui.separator();
@@ -304,13 +341,30 @@ impl Favorites {
             });
             return None;
         }
+        let can_edit = self.can_edit();
         let mut needed = BTreeSet::new();
+        let focus_id = ui.make_persistent_id("favorite-sound-focus");
+        let favorite_key = self.selection.keyboard(ui, focus_id, self.total);
+        let target = self.selection.target();
+        let mut choice = target.and_then(|(index, gesture)| {
+            self.pages
+                .iter()
+                .find(|page| index >= page.offset && index < page.offset + page.rows.len())
+                .and_then(|page| page.rows.get(index - page.offset))
+                .map(|sound| (sound.clone(), index, gesture))
+        });
         let mut action = None;
         let mut remove = None;
+        self.selection.feedback(ui, self.total);
         table_heading(ui);
-        egui::ScrollArea::vertical()
-            .id_salt(("favorites", self.view_generation))
-            .auto_shrink([false, false])
+        self.selection
+            .scroll_area(
+                ui,
+                egui::ScrollArea::vertical()
+                    .id_salt(("favorites", self.view_generation))
+                    .auto_shrink([false, false]),
+                0,
+            )
             .show_rows(ui, 28.0, self.total, |ui, range| {
                 for index in range {
                     let offset = index / PAGE_SIZE * PAGE_SIZE;
@@ -321,8 +375,15 @@ impl Favorites {
                         .find(|page| page.offset == offset)
                         .and_then(|page| page.rows.get(index - offset))
                     {
+                        let key = SoundKey::Favorite(sound.id);
+                        if selected == Some(sound.id) {
+                            self.selection.seed(key, index, &sound.reference.source);
+                            if self.selection.reference().is_none() {
+                                self.selection.remember(sound.reference.clone());
+                            }
+                        }
                         ui.horizontal(|ui| {
-                            if star_button(ui, Some(true), self.can_edit(), &sound.reference.name)
+                            if star_button(ui, Some(true), can_edit, &sound.reference.name)
                                 .clicked()
                             {
                                 remove = Some(sound.reference.source.clone());
@@ -331,15 +392,38 @@ impl Favorites {
                                 ui,
                                 &sound.reference,
                                 &sound.availability,
-                                selected == Some(sound.id),
+                                self.selection.contains(&sound.reference.source, index),
                                 index,
                             );
+                            selection::active_outline(
+                                ui,
+                                &response,
+                                self.selection.active_source()
+                                    == Some(sound.reference.source.as_path()),
+                            );
                             if response.clicked() {
-                                action = Some(Action::Select(sound.clone()));
+                                choice = Some((
+                                    sound.clone(),
+                                    index,
+                                    Gesture::from_modifiers(ui.input(|input| input.modifiers)),
+                                ));
+                                selection::focus(ui, focus_id);
                             }
                             if sound.availability.usable()
                                 && response.drag_started_by(egui::PointerButton::Primary)
                             {
+                                if !self.selection.contains(&sound.reference.source, index) {
+                                    self.selection.choose(
+                                        key,
+                                        index,
+                                        &sound.reference.source,
+                                        Gesture::Replace,
+                                    );
+                                }
+                                self.selection.activate(key, index, &sound.reference.source);
+                                self.selection.remember(sound.reference.clone());
+                                selection::focus(ui, focus_id);
+                                choice = None;
                                 action = Some(Action::Drag(sound.clone()));
                             }
                             response.on_hover_text(sound.reference.source.display().to_string());
@@ -352,11 +436,57 @@ impl Favorites {
                     }
                 }
             });
+        if let Some((sound, index, gesture)) = choice {
+            self.selection.choose(
+                SoundKey::Favorite(sound.id),
+                index,
+                &sound.reference.source,
+                gesture,
+            );
+            self.selection.remember(sound.reference.clone());
+            ui.ctx().request_repaint();
+            action = Some(Action::Select(sound));
+        }
+        if favorite_key
+            && self.can_edit()
+            && let Some(SoundKey::Favorite(id)) = self.selection.active()
+        {
+            remove = self
+                .selection
+                .reference()
+                .map(|reference| reference.source.clone())
+                .or_else(|| {
+                    self.pages
+                        .iter()
+                        .flat_map(|page| &page.rows)
+                        .find(|sound| sound.id == id)
+                        .map(|sound| sound.reference.source.clone())
+                        .or_else(|| {
+                            (selected == Some(id))
+                                .then_some(active_reference)
+                                .flatten()
+                                .map(|reference| reference.source.clone())
+                        })
+                });
+        }
         if let Some(source) = remove {
             self.mutate(worker, operation, Mutation::Unfavorite(source));
         }
         for offset in needed {
             self.request_page(worker, offset);
+        }
+        if let Some((index, _)) = target {
+            self.request_page(worker, index / PAGE_SIZE * PAGE_SIZE);
+        }
+        if let Some(request) = self.selection.request()
+            && worker.favorite_selection(
+                request.generation,
+                self.query.clone(),
+                request.anchor,
+                request.target,
+            )
+        {
+            self.selection.sent();
         }
         action
     }

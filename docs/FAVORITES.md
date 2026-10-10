@@ -15,6 +15,11 @@ with other views. Switching to Collections allows the selected favorite to be
 added there. Watched source changes refresh affected pages; **Refresh favorites**
 checks unwatched or offline references.
 
+The focused list supports [multiple marks and W/S or Up/Down navigation](SELECTION.md).
+F removes the active sound's star. In other sound lists F toggles membership;
+unknown membership is resolved transactionally on the worker before publishing
+the committed value.
+
 Stars reflect committed data. Unknown membership disables the control while
 loading. Pending edits prevent conflicting changes. Failed saves retain the
 mutation and last confirmed state for retry or discard, with feedback available

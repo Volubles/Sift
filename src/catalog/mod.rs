@@ -7,7 +7,7 @@ use crate::library::{AudioMetadata, FileStamp, PROBE_VERSION};
 use crate::search::{PAGE_SIZE, SearchQuery};
 use crate::{Error, Result, path_codec};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SampleId(pub i64);
 
 #[derive(Clone, Debug)]
@@ -255,21 +255,7 @@ impl Catalog {
         scope: &Scope,
         offset: usize,
     ) -> Result<SearchPage> {
-        let (condition, mut values) = match query {
-            SearchQuery::All => ("1", vec![]),
-            SearchQuery::FilenamePrefix { lower, upper } => (
-                "s.name_key >= ?1 AND s.name_key < ?2",
-                vec![Value::Text(lower.clone()), Value::Text(upper.clone())],
-            ),
-            SearchQuery::Substrings(expression) => (
-                "s.id IN (SELECT rowid FROM samples_fts WHERE samples_fts MATCH ?1)",
-                vec![Value::Text(expression.clone())],
-            ),
-        };
-        let condition = format!(
-            "({condition}) AND ({})",
-            scope_condition(scope, &mut values)?
-        );
+        let (condition, mut values) = search_condition(query, scope)?;
         // Count and rows share a snapshot even while the indexer commits batches.
         let transaction = self.connection.transaction()?;
         let total: i64 = transaction.query_row(
@@ -301,6 +287,24 @@ impl Catalog {
             offset,
             rows: rows_out,
         })
+    }
+
+    pub fn selection_sources(
+        &mut self,
+        query: &SearchQuery,
+        scope: &Scope,
+        anchor: &Path,
+        target: &Path,
+    ) -> Result<crate::search::SelectionSources> {
+        let (condition, values) = search_condition(query, scope)?;
+        Ok(crate::search::selection::range_sources(
+            &mut self.connection,
+            crate::search::selection::OrderedTable::Samples,
+            &condition,
+            values,
+            anchor,
+            target,
+        )?)
     }
 
     pub fn roots(&self) -> Result<Vec<PathBuf>> {
@@ -557,4 +561,23 @@ fn directory_range(folder: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     };
     *last += 1;
     Ok((lower, upper))
+}
+
+fn search_condition(query: &SearchQuery, scope: &Scope) -> Result<(String, Vec<Value>)> {
+    let (condition, mut values) = match query {
+        SearchQuery::All => ("1", vec![]),
+        SearchQuery::FilenamePrefix { lower, upper } => (
+            "s.name_key >= ?1 AND s.name_key < ?2",
+            vec![Value::Text(lower.clone()), Value::Text(upper.clone())],
+        ),
+        SearchQuery::Substrings(expression) => (
+            "s.id IN (SELECT rowid FROM samples_fts WHERE samples_fts MATCH ?1)",
+            vec![Value::Text(expression.clone())],
+        ),
+    };
+    let condition = format!(
+        "({condition}) AND ({})",
+        scope_condition(scope, &mut values)?
+    );
+    Ok((condition, values))
 }

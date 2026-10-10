@@ -30,14 +30,36 @@ impl Store {
         // A repeated explicit save is idempotent; it does not replace the saved
         // revision or allocate a new identity. Collection membership is unrelated.
         let transaction = self.connection.transaction()?;
-        transaction.execute("INSERT INTO favorites(source_path,name,name_key,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error)
-            SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12 WHERE NOT EXISTS(SELECT 1 FROM favorites WHERE source_path=?1)",
-            params![path_codec::encode(&reference.source), reference.name, reference.name.to_lowercase(),
-                reference.display_path, reference.format, size as i64, modified,
-                reference.audio.duration_seconds, reference.audio.sample_rate, reference.audio.channels,
-                reference.audio.bit_depth, reference.metadata_error])?;
+        insert_favorite(&transaction, reference, size, modified)?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn toggle_favorite(&mut self, reference: &Reference) -> Result<bool> {
+        validate_path(&reference.source)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let exists: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM favorites WHERE source_path=?1)",
+            [path_codec::encode(&reference.source)],
+            |row| row.get(0),
+        )?;
+        if exists {
+            transaction.execute(
+                "DELETE FROM favorites WHERE source_path=?1",
+                [path_codec::encode(&reference.source)],
+            )?;
+        } else {
+            super::validate_reference(reference)?;
+            let (size, modified) = super::revision(&reference.source)?;
+            if size != reference.size_bytes {
+                return Err(Error::SourceChanged);
+            }
+            insert_favorite(&transaction, reference, size, modified)?;
+        }
+        transaction.commit()?;
+        Ok(!exists)
     }
 
     pub fn unfavorite(&mut self, source: &Path) -> Result<()> {
@@ -80,18 +102,25 @@ impl Store {
         Ok(status)
     }
 
+    pub fn favorite_selection_sources(
+        &mut self,
+        query: &SearchQuery,
+        anchor: &Path,
+        target: &Path,
+    ) -> Result<crate::search::SelectionSources> {
+        let (condition, values) = favorite_condition(query);
+        Ok(crate::search::selection::range_sources(
+            &mut self.connection,
+            crate::search::selection::OrderedTable::Favorites,
+            condition,
+            values,
+            anchor,
+            target,
+        )?)
+    }
+
     pub fn favorites(&mut self, query: &SearchQuery, offset: usize) -> Result<Page<Favorite>> {
-        let (condition, mut values) = match query {
-            SearchQuery::All => ("1", vec![]),
-            SearchQuery::FilenamePrefix { lower, upper } => (
-                "name_key>=?1 AND name_key<?2",
-                vec![Value::Text(lower.clone()), Value::Text(upper.clone())],
-            ),
-            SearchQuery::Substrings(expression) => (
-                "id IN (SELECT rowid FROM favorites_fts WHERE favorites_fts MATCH ?1)",
-                vec![Value::Text(expression.clone())],
-            ),
-        };
+        let (condition, mut values) = favorite_condition(query);
         let transaction = self.connection.transaction()?;
         let total = transaction.query_row(
             &format!("SELECT count(*) FROM favorites WHERE {condition}"),
@@ -141,5 +170,35 @@ fn validate_path(path: &Path) -> Result<()> {
     if !path.is_absolute() || path_codec::encode(path).len() > 65536 {
         return Err(Error::InvalidReference);
     }
+    Ok(())
+}
+
+fn favorite_condition(query: &SearchQuery) -> (&'static str, Vec<Value>) {
+    let (condition, values) = match query {
+        SearchQuery::All => ("1", vec![]),
+        SearchQuery::FilenamePrefix { lower, upper } => (
+            "name_key>=?1 AND name_key<?2",
+            vec![Value::Text(lower.clone()), Value::Text(upper.clone())],
+        ),
+        SearchQuery::Substrings(expression) => (
+            "id IN (SELECT rowid FROM favorites_fts WHERE favorites_fts MATCH ?1)",
+            vec![Value::Text(expression.clone())],
+        ),
+    };
+    (condition, values)
+}
+
+fn insert_favorite(
+    transaction: &rusqlite::Transaction<'_>,
+    reference: &Reference,
+    size: u64,
+    modified: Option<i64>,
+) -> Result<()> {
+    transaction.execute("INSERT INTO favorites(source_path,name,name_key,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error)
+            SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12 WHERE NOT EXISTS(SELECT 1 FROM favorites WHERE source_path=?1)",
+            params![path_codec::encode(&reference.source), reference.name, reference.name.to_lowercase(),
+                reference.display_path, reference.format, size as i64, modified,
+                reference.audio.duration_seconds, reference.audio.sample_rate, reference.audio.channels,
+                reference.audio.bit_depth, reference.metadata_error])?;
     Ok(())
 }

@@ -12,6 +12,8 @@ are separate actions; breadcrumbs provide a path back through ancestors.
 
 The selected sound has waveform, playback, seeking, volume, auto-play, and
 metadata controls. Global favorites provide quick access to saved references.
+Sound lists support multiple marks, keyboard navigation, and an active preview
+distinct from the marked set. Auto-play starts enabled. See [Selection](SELECTION.md).
 Collections keep named selections without duplicating audio. Names and saved
 membership changes persist automatically, with visible save failures and retry.
 
@@ -41,8 +43,9 @@ the same core. WAV, FLAC, MP3, and AIFF metadata are recognized; codec variants,
 devices, external drives, and network shares have individual qualification limits.
 The core workflow works offline.
 
-Selection is currently single-item. Collection folders, user-controlled item
-ordering, tags, multi-selection, application-managed export, portable saved
+Collection adds/removals and outgoing dragging currently act on one sound.
+Group actions, collection folders, user-controlled item
+ordering, tags, application-managed export, portable saved
 selections, and explicit source relinking are not implemented. Similarity search
 is optional future work. Recording, audio editing, cloud synchronization, and
 a timeline are outside the current product scope.

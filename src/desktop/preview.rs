@@ -52,7 +52,7 @@ impl Preview {
             selected_stamp: None,
             source_generation: 0,
             source_check: None,
-            auto_play: false,
+            auto_play: true,
         }
     }
 
@@ -79,14 +79,19 @@ impl Preview {
     }
 
     pub(super) fn refresh_catalog(&mut self, rows: &[Sample]) {
-        if let Some(SoundKey::Library(id)) = self.selected_key {
-            if let Some(sample) = rows.iter().find(|sample| sample.id == id) {
+        if matches!(self.selected_key, Some(SoundKey::Library(_))) {
+            if let Some(sample) = rows.iter().find(|sample| {
+                self.selected
+                    .as_ref()
+                    .is_some_and(|selected| selected.source == sample.source)
+            }) {
+                self.selected_key = Some(SoundKey::Library(sample.id));
                 self.selected = Some(Reference::from(sample));
             }
         } else if self.selected.is_none()
             && let Some(sample) = rows.first()
         {
-            self.select(
+            self.prepare(
                 Reference::from(sample),
                 SoundKey::Library(sample.id),
                 Availability::Ready,
@@ -102,7 +107,28 @@ impl Preview {
         availability: Availability,
         stamp: Option<FileStamp>,
     ) {
-        let autoplay = self.auto_play;
+        self.change_selection(sample, key, availability, stamp, PlaybackIntent::Audition);
+    }
+
+    fn prepare(
+        &mut self,
+        sample: Reference,
+        key: SoundKey,
+        availability: Availability,
+        stamp: Option<FileStamp>,
+    ) {
+        self.change_selection(sample, key, availability, stamp, PlaybackIntent::Prepare);
+    }
+
+    fn change_selection(
+        &mut self,
+        sample: Reference,
+        key: SoundKey,
+        availability: Availability,
+        stamp: Option<FileStamp>,
+        intent: PlaybackIntent,
+    ) {
+        let autoplay = self.auto_play && matches!(intent, PlaybackIntent::Audition);
         self.wave_generation += 1;
         self.waveform = None;
         self.wave_error = match &availability {
@@ -532,6 +558,11 @@ impl Preview {
             ui.label("Choose a sound to inspect its metadata.");
         }
     }
+}
+
+enum PlaybackIntent {
+    Prepare,
+    Audition,
 }
 
 #[cfg(all(test, sift_local_tests))]

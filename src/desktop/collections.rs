@@ -1,6 +1,10 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use super::favorites::{Favorites, star_button};
+use super::{
+    SoundKey,
+    selection::{self, Gesture, Selection},
+};
 use eframe::egui::{self, Color32, RichText};
 
 use crate::collections::{
@@ -9,6 +13,7 @@ use crate::collections::{
 };
 
 pub(super) struct Collections {
+    selection: Selection,
     worker: Worker,
     pub(super) favorites: Favorites,
     pub(super) favorite_paths_dirty: bool,
@@ -34,6 +39,7 @@ struct PendingSave {
     operation: u64,
     mutation: Mutation,
     error: Option<String>,
+    removed_source: Option<PathBuf>,
 }
 
 enum Dialog {
@@ -56,6 +62,7 @@ pub(super) enum Action {
 impl Collections {
     pub(super) fn new(worker: Worker) -> Self {
         Self {
+            selection: Selection::default(),
             worker,
             favorites: Favorites::default(),
             favorite_paths_dirty: true,
@@ -81,13 +88,26 @@ impl Collections {
     pub(super) fn settled(&self) -> bool {
         self.ready
             && self.groups.is_some()
-            && (self.active.is_none() || self.entries.is_some())
+            && (self.active.is_none()
+                || self
+                    .entries
+                    .as_ref()
+                    .is_some_and(|page| page.offset == self.entries_offset))
+            && !self.entries_pending
             && self.save.is_none()
     }
 
     pub(super) fn poll(&mut self) {
+        self.worker
+            .invalidate_entry_selection(self.selection.generation());
         while let Some(event) = self.worker.poll() {
             match event {
+                Event::FavoriteSelection { generation, result } => {
+                    self.favorites.selection_result(generation, result)
+                }
+                Event::EntrySelection { generation, result } => {
+                    self.selection.resolved(generation, result)
+                }
                 Event::Ready => {
                     self.ready = true;
                     self.refresh_groups();
@@ -134,6 +154,13 @@ impl Collections {
                     self.entries_pending = false;
                     match result {
                         Ok(page) => {
+                            for (position, entry) in page.rows.iter().enumerate() {
+                                self.selection.observe(
+                                    SoundKey::Collection(entry.id),
+                                    page.offset + position,
+                                    &entry.reference.source,
+                                );
+                            }
                             if page.total > 0 && page.offset >= page.total {
                                 self.entries_offset = (page.total - 1) / PAGE_SIZE * PAGE_SIZE;
                                 self.refresh_entries();
@@ -157,6 +184,13 @@ impl Collections {
                 {
                     match result {
                         Ok(change) => {
+                            if let Some(source) = self
+                                .save
+                                .as_ref()
+                                .and_then(|save| save.removed_source.as_ref())
+                            {
+                                self.selection.forget(source);
+                            }
                             self.save = None;
                             self.dialog = None;
                             match change {
@@ -172,6 +206,7 @@ impl Collections {
                                     self.refresh_entries()
                                 }
                                 Change::Deleted(id) if self.active == Some(id) => {
+                                    self.selection.reset();
                                     self.favorite_paths_dirty = true;
                                     self.active = None;
                                     self.entries = None;
@@ -197,6 +232,7 @@ impl Collections {
     }
 
     fn activate(&mut self, id: CollectionId) {
+        self.selection.reset();
         self.active = Some(id);
         self.entries_offset = 0;
         self.refresh_entries();
@@ -209,11 +245,20 @@ impl Collections {
         self.groups_failed = false;
     }
     fn refresh_entries(&mut self) {
+        self.selection.refresh();
         self.favorite_paths_dirty = true;
         self.entries_generation += 1;
         self.entries = None;
         self.entries_pending = false;
         self.entries_failed = false;
+    }
+
+    fn load_entry_page(&mut self, offset: usize) {
+        self.entries_offset = offset;
+        self.entries_generation += 1;
+        self.entries_pending = false;
+        self.entries_failed = false;
+        self.request_pages();
     }
 
     fn request_pages(&mut self) {
@@ -223,7 +268,10 @@ impl Collections {
                 .groups(self.groups_generation, self.groups_offset);
         }
         if self.ready
-            && self.entries.is_none()
+            && self
+                .entries
+                .as_ref()
+                .is_none_or(|page| page.offset != self.entries_offset)
             && !self.entries_pending
             && !self.entries_failed
             && let Some(id) = self.active
@@ -246,11 +294,20 @@ impl Collections {
             return;
         }
         self.operation += 1;
+        let removed_source = match &mutation {
+            Mutation::Remove { entry, collection } if self.active == Some(*collection) => {
+                self.entries.as_ref().and_then(|page| page.rows.iter().find(|row| row.id == *entry))
+                    .map(|row| row.reference.source.clone())
+                    .or_else(|| self.save.as_ref().filter(|save| matches!(&save.mutation, Mutation::Remove {entry: old_entry, collection: old_collection} if old_entry == entry && old_collection == collection)).and_then(|save| save.removed_source.clone()))
+            }
+            _ => None,
+        };
         let error = self.worker.mutate(self.operation, mutation.clone()).err();
         self.save = Some(PendingSave {
             operation: self.operation,
             mutation,
             error,
+            removed_source,
         });
     }
 
@@ -279,9 +336,20 @@ impl Collections {
         &mut self,
         ui: &mut egui::Ui,
         selected: Option<crate::collections::favorites::FavoriteId>,
+        active_reference: Option<&Reference>,
     ) -> Option<super::favorites::Action> {
-        self.favorites
-            .list(ui, &self.worker, &mut self.operation, self.ready, selected)
+        self.favorites.list(
+            ui,
+            &self.worker,
+            &mut self.operation,
+            self.ready,
+            selected,
+            active_reference,
+        )
+    }
+
+    pub(super) fn sound_has_focus(&self, context: &egui::Context) -> bool {
+        self.selection.has_focus(context) || self.favorites.has_focus(context)
     }
 
     pub(super) fn sources_changed(&mut self, paths: &[PathBuf]) {
@@ -434,6 +502,18 @@ impl Collections {
         let mut action = None;
         let mut remove = None;
         let mut favorite = None;
+        let focus_id = ui.make_persistent_id("collection-sound-focus");
+        let total = self.entries.as_ref().map_or(0, |page| page.total);
+        let favorite_key = self.selection.keyboard(ui, focus_id, total);
+        self.selection.feedback(ui, total);
+        let target = self.selection.target();
+        let mut choice = target.and_then(|(index, gesture)| {
+            self.entries
+                .as_ref()
+                .filter(|page| index >= page.offset && index < page.offset + page.rows.len())
+                .and_then(|page| page.rows.get(index - page.offset))
+                .map(|entry| (entry.clone(), index, gesture))
+        });
         if let Some(collection) = self.active {
             ui.horizontal(|ui| {
                 if ui
@@ -457,17 +537,34 @@ impl Collections {
                     self.refresh_entries();
                 }
             });
-            if let Some(page) = &self.entries {
+            if let Some(page) = self
+                .entries
+                .as_ref()
+                .filter(|page| page.offset == self.entries_offset)
+            {
                 if page.total == 0 {
                     ui.label("Drag a sound onto the collection above, or add the selected sound.");
                 }
                 let height = (ui.available_height() - 86.0).max(80.0);
-                egui::ScrollArea::vertical()
-                    .id_salt(("collection-entries", collection.0))
-                    .max_height(height)
+                self.selection
+                    .scroll_area(
+                        ui,
+                        egui::ScrollArea::vertical()
+                            .id_salt(("collection-entries", collection.0))
+                            .max_height(height),
+                        page.offset,
+                    )
                     .show_rows(ui, 28.0, page.rows.len(), |ui, range| {
                         for index in range {
                             let entry = &page.rows[index];
+                            let key = SoundKey::Collection(entry.id);
+                            let position = page.offset + index;
+                            if selected_entry == Some(entry.id) {
+                                self.selection.seed(key, position, &entry.reference.source);
+                                if self.selection.reference().is_none() {
+                                    self.selection.remember(entry.reference.clone());
+                                }
+                            }
                             let status = match &entry.availability {
                                 Availability::Ready => "",
                                 Availability::Changed => "Changed · ",
@@ -496,15 +593,40 @@ impl Collections {
                                         status, entry.reference.name
                                     ))
                                     .truncate()
-                                    .selected(selected_entry == Some(entry.id))
+                                    .selected(
+                                        self.selection.contains(&entry.reference.source, position),
+                                    )
                                     .sense(egui::Sense::click_and_drag()),
                                 );
+                                selection::active_outline(
+                                    ui,
+                                    &response,
+                                    self.selection.active_source()
+                                        == Some(entry.reference.source.as_path()),
+                                );
                                 if response.clicked() {
-                                    action = Some(Action::Select(entry.clone()));
+                                    choice = Some((
+                                        entry.clone(),
+                                        position,
+                                        Gesture::from_modifiers(ui.input(|input| input.modifiers)),
+                                    ));
+                                    selection::focus(ui, focus_id);
                                 }
                                 if entry.availability.usable()
                                     && response.drag_started_by(egui::PointerButton::Primary)
                                 {
+                                    if !self.selection.contains(&entry.reference.source, position) {
+                                        self.selection.choose(
+                                            key,
+                                            position,
+                                            &entry.reference.source,
+                                            Gesture::Replace,
+                                        );
+                                    }
+                                    self.selection
+                                        .activate(key, position, &entry.reference.source);
+                                    selection::focus(ui, focus_id);
+                                    choice = None;
                                     action = Some(Action::Drag(entry.clone()));
                                 }
                                 response.context_menu(|ui| {
@@ -526,8 +648,7 @@ impl Collections {
                     });
                 let total = page.total;
                 if let Some(offset) = pager(ui, self.entries_offset, total) {
-                    self.entries_offset = offset;
-                    self.refresh_entries();
+                    self.load_entry_page(offset);
                 }
                 ui.label(
                     RichText::new(format!("{total} saved sounds"))
@@ -542,6 +663,53 @@ impl Collections {
             }
         } else {
             ui.label("Choose a collection.");
+        }
+        if let Some((entry, index, gesture)) = choice {
+            self.selection.choose(
+                SoundKey::Collection(entry.id),
+                index,
+                &entry.reference.source,
+                gesture,
+            );
+            self.selection.remember(entry.reference.clone());
+            ui.ctx().request_repaint();
+            action = Some(Action::Select(entry));
+        }
+        if let Some((index, _)) = target
+            && index / PAGE_SIZE * PAGE_SIZE != self.entries_offset
+        {
+            self.load_entry_page(index / PAGE_SIZE * PAGE_SIZE);
+        }
+        if favorite_key && let Some(SoundKey::Collection(id)) = self.selection.active() {
+            favorite = selected
+                .filter(|reference| {
+                    self.selection.active_source() == Some(reference.source.as_path())
+                })
+                .cloned()
+                .or_else(|| self.selection.reference().cloned())
+                .or_else(|| {
+                    self.entries
+                        .as_ref()
+                        .and_then(|page| page.rows.iter().find(|entry| entry.id == id))
+                        .map(|entry| entry.reference.clone())
+                        .or_else(|| {
+                            (selected_entry == Some(id))
+                                .then_some(selected)
+                                .flatten()
+                                .cloned()
+                        })
+                });
+        }
+        if let Some(request) = self.selection.request()
+            && let Some(collection) = self.active
+            && self.worker.entry_selection(
+                request.generation,
+                collection,
+                request.anchor,
+                request.target,
+            )
+        {
+            self.selection.sent();
         }
         if let Some(reference) = favorite {
             self.toggle_favorite(&reference);

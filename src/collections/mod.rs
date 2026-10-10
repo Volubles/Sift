@@ -263,6 +263,22 @@ impl Store {
         Ok(())
     }
 
+    pub fn entry_selection_sources(
+        &mut self,
+        collection: CollectionId,
+        anchor: &Path,
+        target: &Path,
+    ) -> Result<crate::search::SelectionSources> {
+        Ok(crate::search::selection::range_sources(
+            &mut self.connection,
+            crate::search::selection::OrderedTable::Entries,
+            "collection_id=?1",
+            vec![rusqlite::types::Value::Integer(collection.0)],
+            anchor,
+            target,
+        )?)
+    }
+
     pub fn entries(&mut self, collection: CollectionId, offset: usize) -> Result<Page<Entry>> {
         let sql_offset = i64::try_from(offset).map_err(|_| Error::InvalidReference)?;
         let transaction = self.connection.transaction()?;

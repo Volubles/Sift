@@ -18,6 +18,10 @@ mod index;
 #[derive(Debug)]
 pub enum Event {
     Ready,
+    Selection {
+        generation: u64,
+        result: std::result::Result<crate::search::SelectionSources, String>,
+    },
     Page {
         generation: u64,
         result: std::result::Result<SearchPage, String>,
@@ -63,6 +67,13 @@ struct QueryRequest {
 
 enum ReadRequest {
     Search(QueryRequest),
+    Selection {
+        generation: u64,
+        query: SearchQuery,
+        scope: Scope,
+        anchor: PathBuf,
+        target: PathBuf,
+    },
     Folders {
         generation: u64,
         parent: PathBuf,
@@ -112,6 +123,7 @@ pub struct Workers {
     latest_generation: Arc<AtomicU64>,
     latest_folder_generation: Arc<AtomicU64>,
     latest_source_generation: Arc<AtomicU64>,
+    latest_selection_generation: Arc<AtomicU64>,
     scan_cancellation: Option<Cancellation>,
     automatic_cancellation: Cancellation,
     threads: Vec<JoinHandle<()>>,
@@ -136,6 +148,8 @@ impl Workers {
         let folder_generation = latest_folder_generation.clone();
         let latest_source_generation = Arc::new(AtomicU64::new(0));
         let source_generation = latest_source_generation.clone();
+        let latest_selection_generation = Arc::new(AtomicU64::new(0));
+        let selection_generation = latest_selection_generation.clone();
         let mut workers = Self {
             events: Some(events),
             queries: Some(query_sender),
@@ -144,6 +158,7 @@ impl Workers {
             latest_generation,
             latest_folder_generation,
             latest_source_generation,
+            latest_selection_generation,
             scan_cancellation: None,
             automatic_cancellation,
             threads: Vec::new(),
@@ -203,6 +218,24 @@ impl Workers {
                     // Discard obsolete queries, but preserve every visible page of
                     // the current generation even when two pages are needed together.
                     let event = match request {
+                        ReadRequest::Selection {
+                            generation,
+                            query,
+                            scope,
+                            anchor,
+                            target,
+                        } => {
+                            if generation < selection_generation.load(Ordering::Relaxed) {
+                                wake();
+                                continue;
+                            }
+                            Event::Selection {
+                                generation,
+                                result: reader
+                                    .selection_sources(&query, &scope, &anchor, &target)
+                                    .map_err(|error| error.to_string()),
+                            }
+                        }
                         ReadRequest::Search(request) => {
                             if request.generation < reader_generation.load(Ordering::Relaxed) {
                                 wake();
@@ -293,6 +326,34 @@ impl Workers {
 
     pub fn query(&self, generation: u64, query: SearchQuery, offset: usize) -> bool {
         self.query_scoped(generation, query, Scope::All, offset)
+    }
+
+    pub fn selection(
+        &self,
+        generation: u64,
+        query: SearchQuery,
+        scope: Scope,
+        anchor: PathBuf,
+        target: PathBuf,
+    ) -> bool {
+        self.latest_selection_generation
+            .fetch_max(generation, Ordering::Relaxed);
+        self.queries.as_ref().is_some_and(|sender| {
+            sender
+                .try_send(ReadRequest::Selection {
+                    generation,
+                    query,
+                    scope,
+                    anchor,
+                    target,
+                })
+                .is_ok()
+        })
+    }
+
+    pub fn invalidate_selection(&self, generation: u64) {
+        self.latest_selection_generation
+            .fetch_max(generation, Ordering::Relaxed);
     }
 
     pub fn query_scoped(

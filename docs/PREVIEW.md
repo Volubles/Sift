@@ -1,12 +1,16 @@
 # Audio preview and waveforms
 
 The selected sound has Play/Pause, Stop, volume, auto-play, a waveform, and source
-details. Auto-play starts a newly selected sound. With auto-play disabled,
+details. Auto-play starts enabled and auditions a newly selected sound. The
+initial passive catalog selection prepares its waveform without starting audio.
+With auto-play disabled,
 selection stops the previous preview and prepares the new waveform without
 opening an output device. Clicking the waveform plays from that position.
 
 Space toggles playback when text fields and the folder tree do not own keyboard
 focus. Missing sources and metadata errors disable preview and remain visible.
+W/S and Up/Down navigate the focused sound list; [Selection](SELECTION.md)
+describes marking, focus, and the favorite shortcut.
 Changed sources retain their saved references while selected metadata is checked.
 
 ## Selection ownership

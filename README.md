@@ -74,6 +74,11 @@ Click a sound to load its waveform. Use **Play/Pause**, **Stop**, volume, or
 source metadata and availability. Space toggles playback when focus is outside
 text fields and the folder tree.
 
+Auto-play starts enabled. Focus a sound list and use **W/S** or **Up/Down** to
+audition neighboring sounds. **F** toggles the active sound's favorite.
+**Ctrl+click**, **Shift+click**, and **Ctrl+A** mark sounds; see
+[selection and keyboard navigation](docs/SELECTION.md) for scope and page behavior.
+
 ### Keep a selection
 
 Star a sound to save it in **Favorites**, available across libraries and
@@ -97,6 +102,10 @@ the gesture. Original bytes and collection references stay in place.
 | Folder tree | Enter | Browse the focused folder's sounds |
 | Folder tree | Home / End | Focus the first / last loaded folder |
 | Preview | Space | Play / pause when other controls do not own the key |
+| Sound list | W / S or Up / Down | Activate the previous / next sound |
+| Sound list | Shift + navigation | Extend the marked range |
+| Sound list | Ctrl+A | Mark all results in the current view |
+| Sound list | F | Toggle the active sound's favorite |
 | File drag | Escape | Cancel |
 
 ## Current scope
@@ -104,8 +113,9 @@ the gesture. Original bytes and collection references stay in place.
 The index recognizes **WAV, FLAC, MP3, and AIFF**. Container metadata support does
 not guarantee playback of every codec variant or compatibility with every device.
 
-Selection is currently single-item. Collection folders and item ordering, tags,
-multi-selection, application-managed export, and explicit relinking of moved
+Collection adds/removals and outgoing dragging currently act on one sound.
+Group actions, collection folders and item ordering, tags,
+application-managed export, and explicit relinking of moved
 saved sources are later work. Similarity search is optional future work.
 
 Large-library measurements use generated fixtures with documented limits.
@@ -166,6 +176,7 @@ Use `--database PATH` to isolate a test. Queries return at most 128 results per 
 | --- | --- |
 | Browser and saved sounds | [Libraries](docs/LIBRARIES.md), [Collections](docs/COLLECTIONS.md), [Favorites](docs/FAVORITES.md) |
 | Audio and file transfer | [Preview](docs/PREVIEW.md), [Drag and drop](docs/DRAG-AND-DROP.md) |
+| Marking and keyboard controls | [Selection](docs/SELECTION.md) |
 | Files and live updates | [Incremental indexing](docs/INDEXING.md) |
 | Design and behavior | [Architecture](docs/ARCHITECTURE.md), [Product overview](docs/PRODUCT.md) |
 | Resource use and evidence | [Performance](docs/PERFORMANCE.md), [Renderer baseline](docs/BASELINE.md), [Index measurements](docs/INDEXING-BASELINE.md) |

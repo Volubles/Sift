@@ -14,6 +14,7 @@ use super::{Collection, CollectionId, Entry, EntryId, Page, Reference, Store};
 #[derive(Clone, Debug)]
 pub enum Mutation {
     Favorite(Reference),
+    ToggleFavorite(Reference),
     Unfavorite(PathBuf),
     Create(String),
     Rename {
@@ -34,6 +35,7 @@ pub enum Mutation {
 #[derive(Debug)]
 pub enum Change {
     FavoriteChanged(PathBuf),
+    FavoriteToggled { source: PathBuf, favorite: bool },
     Created(CollectionId),
     Updated(CollectionId),
     Deleted(CollectionId),
@@ -42,6 +44,14 @@ pub enum Change {
 #[derive(Debug)]
 pub enum Event {
     Ready,
+    FavoriteSelection {
+        generation: u64,
+        result: Result<crate::search::SelectionSources, String>,
+    },
+    EntrySelection {
+        generation: u64,
+        result: Result<crate::search::SelectionSources, String>,
+    },
     StartupFailed(String),
     Favorites {
         generation: u64,
@@ -67,6 +77,18 @@ pub enum Event {
 }
 
 enum Command {
+    FavoriteSelection {
+        generation: u64,
+        query: SearchQuery,
+        anchor: PathBuf,
+        target: PathBuf,
+    },
+    EntrySelection {
+        generation: u64,
+        collection: CollectionId,
+        anchor: PathBuf,
+        target: PathBuf,
+    },
     Favorites {
         generation: u64,
         query: SearchQuery,
@@ -98,6 +120,8 @@ pub struct Worker {
     status_generation: Arc<AtomicU64>,
     groups_generation: Arc<AtomicU64>,
     entries_generation: Arc<AtomicU64>,
+    favorite_selection_generation: Arc<AtomicU64>,
+    entry_selection_generation: Arc<AtomicU64>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -113,6 +137,10 @@ impl Worker {
         let entries_generation = Arc::new(AtomicU64::new(0));
         let groups = groups_generation.clone();
         let entries = entries_generation.clone();
+        let favorite_selection_generation = Arc::new(AtomicU64::new(0));
+        let entry_selection_generation = Arc::new(AtomicU64::new(0));
+        let favorite_selection = favorite_selection_generation.clone();
+        let entry_selection = entry_selection_generation.clone();
         let thread = thread::Builder::new()
             .name("sift-collections".into())
             .spawn(move || {
@@ -131,6 +159,12 @@ impl Worker {
                 }
                 while let Ok(command) = jobs.recv() {
                     let stale_read = match &command {
+                        Command::FavoriteSelection { generation, .. } => {
+                            *generation < favorite_selection.load(Ordering::Acquire)
+                        }
+                        Command::EntrySelection { generation, .. } => {
+                            *generation < entry_selection.load(Ordering::Acquire)
+                        }
                         Command::Favorites { generation, .. } => {
                             *generation < favorites.load(Ordering::Acquire)
                         }
@@ -154,6 +188,28 @@ impl Worker {
                         continue;
                     }
                     let event = match command {
+                        Command::FavoriteSelection {
+                            generation,
+                            query,
+                            anchor,
+                            target,
+                        } => Event::FavoriteSelection {
+                            generation,
+                            result: store
+                                .favorite_selection_sources(&query, &anchor, &target)
+                                .map_err(|error| error.to_string()),
+                        },
+                        Command::EntrySelection {
+                            generation,
+                            collection,
+                            anchor,
+                            target,
+                        } => Event::EntrySelection {
+                            generation,
+                            result: store
+                                .entry_selection_sources(collection, &anchor, &target)
+                                .map_err(|error| error.to_string()),
+                        },
                         Command::Favorites {
                             generation,
                             query,
@@ -192,6 +248,12 @@ impl Worker {
                             // Accepted edits are drained even after the UI disconnects.
                             // Successful completion is emitted only after SQL commit.
                             let result = match mutation {
+                                Mutation::ToggleFavorite(reference) => store
+                                    .toggle_favorite(&reference)
+                                    .map(|favorite| Change::FavoriteToggled {
+                                        source: reference.source,
+                                        favorite,
+                                    }),
                                 Mutation::Favorite(reference) => store
                                     .favorite(&reference)
                                     .map(|()| Change::FavoriteChanged(reference.source)),
@@ -232,6 +294,8 @@ impl Worker {
             status_generation,
             groups_generation,
             entries_generation,
+            favorite_selection_generation,
+            entry_selection_generation,
             thread: Some(thread),
         })
     }
@@ -247,6 +311,50 @@ impl Worker {
             generation,
             query,
             offset,
+        })
+    }
+
+    pub fn favorite_selection(
+        &self,
+        generation: u64,
+        query: SearchQuery,
+        anchor: PathBuf,
+        target: PathBuf,
+    ) -> bool {
+        self.favorite_selection_generation
+            .fetch_max(generation, Ordering::Relaxed);
+        self.send_query(Command::FavoriteSelection {
+            generation,
+            query,
+            anchor,
+            target,
+        })
+    }
+
+    pub fn invalidate_favorite_selection(&self, generation: u64) {
+        self.favorite_selection_generation
+            .fetch_max(generation, Ordering::Relaxed);
+    }
+
+    pub fn invalidate_entry_selection(&self, generation: u64) {
+        self.entry_selection_generation
+            .fetch_max(generation, Ordering::Relaxed);
+    }
+
+    pub fn entry_selection(
+        &self,
+        generation: u64,
+        collection: CollectionId,
+        anchor: PathBuf,
+        target: PathBuf,
+    ) -> bool {
+        self.entry_selection_generation
+            .fetch_max(generation, Ordering::Relaxed);
+        self.send_query(Command::EntrySelection {
+            generation,
+            collection,
+            anchor,
+            target,
         })
     }
 
