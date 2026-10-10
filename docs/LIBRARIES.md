@@ -44,7 +44,7 @@ on a worker when snapshots refresh, not on every frame.
 The desktop integration provides Libraries and Collections in a narrow
 activity rail. The library sidebar shows named banks above their source/folder
 tree. Selecting a bank shows all its indexed sounds; selecting a folder scopes
-the central table and search to that subtree. `All files` restores the bank
+the central table and search to that subtree. `All sounds` restores the bank
 scope. Switching to Collections preserves the library, folder, and query.
 
 Create/rename/remove bank and attach/detach source operations run on the storage
@@ -84,8 +84,59 @@ runtime checks. The final build is compiled; no new CPU/RAM qualification is
 claimed.
 
 The [incremental live index](INDEXING.md) now skips unchanged metadata and
-reconciles moved/deleted cached paths. Durable source relinking, favourites, multi-library
+reconciles moved/deleted cached paths. [Favorites](FAVORITES.md) are implemented;
+durable source relinking, multi-library
 selection, and restart persistence of the active view are later checkpoints.
 Exact locators are deduplicated; distinct hard links or filesystem aliases are
 not a content-hash identity system. No performance improvement is claimed from
 the data structure alone.
+
+## Clear tree layout and navigation
+
+The approved Clear tree concept is implemented with 30-pixel rows, 16-pixel
+indents, fixed chevron/icon/name columns, subtle hierarchy guides, and distinct
+hover/selection/keyboard focus. Sources use drive icons, other folders use
+closed/open folder icons. Cached source counts sit at the right; offline or
+unavailable status is explicit. Truncated labels expose the full native path
+on hover. Library rows no longer reserve unused vertical space up to their
+180-pixel maximum. The Folders header's labeled **+** opens the existing native
+source chooser; source context menus retain rescan/removal actions.
+
+Up/Down move focus through currently loaded rows, Left/Right collapse/expand or
+move to the parent/first child, Enter selects the sound scope, and Home/End move
+to the first/last loaded row. Space in the tree does not trigger playback.
+Focus uses the bank, native source root, and native folder path rather than row
+indices; overlapping-root appearances cannot share a widget identity. Selection
+survives collapsing its branch. Focus scrolls into view, survives temporary page
+invalidation, and falls back to a visible ancestor if its folder disappears.
+Tab still leaves controls available; full screen-reader qualification is pending.
+
+Derived rows borrow loaded metadata/native locators. Only visible row widgets
+are created, using existing 64-child pages, 32 open branches, generation checks,
+and bounded workers. No scanner, source-count query, database schema, dependency,
+or worker was added. Stale replies for a previous folder page offset are also
+rejected. The first step intentionally does not compute subfolder counts.
+
+The integrated default-feature suite passes 94 tests, including breadcrumb
+targets, bounded revealing, separate chevron/row clicks, raw keyboard events,
+virtual-row scrolling, focus after refresh/removal, distinct overlapping-root
+IDs, and stale offset replies. Formatting, Clippy, and the Windows release build
+pass. A real release capture of the approved generated fixture bank shows the
+expanded hierarchy, selected Forest folder, full breadcrumb, and its two sounds;
+all five WAV/FLAC/MP3/AIFF source hashes remain unchanged. Physical Windows
+mouse/keyboard use, context-menu/dialog operation, and screen-reader interaction
+remain manual checks. No whole-app performance qualification is claimed here.
+
+One repeated suite run encountered Windows error 5 while renaming a temporary
+directory in the existing incremental-index fixture. That test passed in an
+isolated serialized run and the normal full-suite repeat passed. The fixture
+and index implementation were not changed to mask the failure.
+
+Developer capture can set `SIFT_SMOKE_SUBFOLDER=Ambiences\Forest` together with
+`browse --smoke-screenshot PATH.ppm` on an isolated fixture bank. Only normal
+relative components are accepted, under the active bank's first native source;
+ordinary startup ignores the selector. Raw captures stay in `.local/`.
+
+Design references: [Fluent tree navigation](https://fluent2.microsoft.design/components/web/react/core/tree/usage),
+[W3C tree keyboard patterns](https://www.w3.org/WAI/ARIA/apg/patterns/treeview/),
+and [breadcrumb guidance](https://www.nngroup.com/articles/breadcrumbs/).

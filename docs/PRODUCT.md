@@ -32,10 +32,18 @@ verification. Publishing, licensing, and final visual design remain open.
 Users can create named libraries containing one or more existing source folders
 without importing or copying audio. The library sidebar lists banks above a
 folder browser; the central table shows the selected bank, or a selected folder
-and its descendants. `All files` restores the bank scope. Search stays scoped,
+and its descendants. `All sounds` restores the bank scope. Search stays scoped,
 and switching to Collections preserves the current library view. Removing a
 bank or source registration must not delete its audio. Durable registrations
 remain separate from rebuildable searchable metadata.
+
+The Clear tree layout uses aligned chevron/icon/name columns, hierarchy guides,
+distinct hover/selection/focus, and cached source counts or offline status.
+Chevron clicks open a branch; row clicks or Enter select its sounds. Arrow keys
+navigate without changing the selected sound scope. Breadcrumbs show the native
+ancestor chain and provide parent navigation. Library rows use their content
+height up to a bound, leaving the remaining sidebar to Folders. Subfolder counts
+are outside this checkpoint; do not add per-frame count queries for decoration.
 
 An initial scan shows genuine progress, errors, and pause/cancel controls.
 Later scans primarily process changed files. Define behavior for symbolic-link

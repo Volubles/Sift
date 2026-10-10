@@ -46,13 +46,19 @@ No remote, publishing, or distribution license has been selected.
 
 ## Verification
 
-The Clear tree navigation checkpoint adds clickable bank/source/subfolder
-breadcrumbs above search. It preserves the native folder target and query text,
-reveals ancestors within the existing 32-branch limit, and compresses deep paths
-into a menu. Unicode, overlapping source roots, invalid scopes, deep paths,
-and breadcrumb-click interaction have regression coverage. Tree appearance and
-keyboard integration are the next part of this approved UI checkpoint.
-All 89 default-feature tests, formatting, and Clippy pass for this navigation step.
+The approved Clear tree layout is implemented with aligned chevrons/drive/folder
+icons, hierarchy guides, stronger contrast, selected-row accents, and cached
+source counts/status. Libraries use content height up to their bound, leaving
+more sidebar space to Folders. Clickable native-path breadcrumbs preserve the
+query/bank, compress deep paths into a menu, and reveal bounded ancestors.
+Arrow keys move/open/close, Enter chooses the scope, Home/End move focus, and
+Space in the tree does not play audio. Focus is distinct from selection and
+survives virtualized scrolling and transient page refresh; stale offsets are
+rejected. The existing 64-child/32-open-branch limits remain. All 94 default-feature tests,
+formatting, Clippy, and release compilation pass. A real Windows fixture capture
+was checked, with all five source hashes unchanged. Physical mouse/keyboard,
+native source dialogs/context menus, and screen-reader checks remain manual.
+See [Libraries](LIBRARIES.md); broad performance qualification is still pending.
 
 Favorites are implemented in durable collection schema 2 with independent
 IDs/native references, transactional upgrade, indexed search, bounded membership

@@ -3,9 +3,12 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, Color32, RichText};
 
-use crate::catalog::{FOLDER_PAGE_SIZE, FolderPage, Scope};
-use crate::libraries::{Availability, Library, LibraryId, SourceId};
+use crate::catalog::{FolderPage, Scope};
+use crate::libraries::{Library, LibraryId};
 use crate::worker::{EditOutcome, LibraryEdit, Workers};
+
+mod tree;
+use tree::TreeFocus;
 
 const MAX_OPEN_FOLDERS: usize = 32;
 
@@ -31,6 +34,9 @@ pub(super) struct Libraries {
     operation: u64,
     dialog: Option<Dialog>,
     initial_folder: Option<PathBuf>,
+    tree_focus: Option<TreeFocus>,
+    focus_scroll: bool,
+    tree_offset: f32,
 }
 
 struct PendingSave {
@@ -54,26 +60,6 @@ enum Dialog {
 pub(super) enum Action {
     ScopeChanged,
     Scan(PathBuf),
-}
-
-enum TreeRow {
-    Folder {
-        path: PathBuf,
-        name: String,
-        depth: usize,
-        expandable: bool,
-        source: Option<SourceId>,
-    },
-    Loading {
-        parent: PathBuf,
-        depth: usize,
-    },
-    Pager {
-        parent: PathBuf,
-        depth: usize,
-        offset: usize,
-        total: usize,
-    },
 }
 
 impl Libraries {
@@ -174,6 +160,21 @@ impl Libraries {
         self.folder = folder;
     }
 
+    pub(super) fn select_smoke_subfolder(&mut self, relative: PathBuf) -> bool {
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return false;
+        }
+        let Some(root) = self.roots().into_iter().next() else {
+            return false;
+        };
+        self.select_folder(Some(root.join(relative)));
+        true
+    }
+
     pub(super) fn breadcrumb_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.scope();
         let crumbs = self.breadcrumbs();
@@ -213,7 +214,7 @@ impl Libraries {
                 let text = if index == crumbs.len() - 1 {
                     text.strong()
                 } else {
-                    text.color(ui.visuals().weak_text_color())
+                    text.color(tree::secondary_color(ui))
                 };
                 let response = ui.add_sized(
                     [
@@ -282,6 +283,15 @@ impl Libraries {
                 }
                 self.expanded
                     .retain(|folder| roots.iter().any(|root| folder.starts_with(root)));
+                if self.tree_focus.as_ref().is_some_and(|target| match target {
+                    TreeFocus::All => false,
+                    TreeFocus::Folder { root, path } => {
+                        !roots.contains(root) || !path.starts_with(root)
+                    }
+                }) {
+                    self.tree_focus = None;
+                    self.focus_scroll = false;
+                }
                 self.invalidate();
             }
             Err(error) => {
@@ -298,6 +308,9 @@ impl Libraries {
         }
         match result {
             Ok(page) => {
+                if page.offset != self.offsets.get(&page.parent).copied().unwrap_or(0) {
+                    return;
+                }
                 self.pending.remove(&page.parent);
                 if self.expanded.contains(&page.parent) {
                     self.pages.insert(page.parent.clone(), page);
@@ -402,6 +415,9 @@ impl Libraries {
 
     fn choose_bank(&mut self, id: Option<LibraryId>) {
         self.active = id;
+        self.tree_focus = None;
+        self.focus_scroll = false;
+        self.tree_offset = 0.0;
         self.folder = None;
         self.expanded.clear();
         self.offsets.clear();
@@ -429,37 +445,6 @@ impl Libraries {
             self.expanded.insert(path.clone());
         } else {
             self.error = Some("Close a branch before opening more than 32 folders at once.".into());
-        }
-    }
-
-    fn children(&self, path: &PathBuf, depth: usize, rows: &mut Vec<TreeRow>) {
-        if !self.expanded.contains(path) || depth >= 64 {
-            return;
-        }
-        if let Some(page) = self.pages.get(path) {
-            for folder in &page.rows {
-                rows.push(TreeRow::Folder {
-                    path: folder.source.clone(),
-                    name: folder.name.clone(),
-                    depth,
-                    expandable: folder.has_children,
-                    source: None,
-                });
-                self.children(&folder.source, depth + 1, rows);
-            }
-            if page.total > FOLDER_PAGE_SIZE {
-                rows.push(TreeRow::Pager {
-                    parent: path.clone(),
-                    depth,
-                    offset: page.offset,
-                    total: page.total,
-                });
-            }
-        } else {
-            rows.push(TreeRow::Loading {
-                parent: path.clone(),
-                depth,
-            });
         }
     }
 
@@ -512,17 +497,19 @@ impl Libraries {
         egui::ScrollArea::vertical()
             .id_salt("library-banks")
             .max_height(180.0)
-            .auto_shrink([false, false])
+            .auto_shrink([false, true])
             .show_rows(ui, 28.0, self.groups.len(), |ui, range| {
                 for index in range {
                     let bank = &self.groups[index];
-                    let response = ui.add_sized(
-                        [ui.available_width(), 28.0],
-                        egui::Button::selectable(self.active == Some(bank.id), &bank.name)
-                            .shortcut_text(bank.count.to_string())
-                            .truncate()
-                            .selected(self.active == Some(bank.id)),
-                    );
+                    let response = ui
+                        .add_sized(
+                            [ui.available_width(), 28.0],
+                            egui::Button::selectable(self.active == Some(bank.id), &bank.name)
+                                .shortcut_text(bank.count.to_string())
+                                .truncate()
+                                .selected(self.active == Some(bank.id)),
+                        )
+                        .on_hover_text(&bank.name);
                     if response.clicked() {
                         bank_choice = Some(bank.id);
                     }
@@ -562,197 +549,34 @@ impl Libraries {
         }
         ui.add_space(8.0);
         ui.separator();
-        ui.label(RichText::new("FOLDERS").strong());
-        if let Some(id) = self.active
-            && ui
-                .add_enabled(can_edit, egui::Button::new("Add source folder..."))
-                .clicked()
-        {
-            #[cfg(windows)]
-            if let Some(path) = rfd::FileDialog::new()
-                .set_title("Add a source folder to this library")
-                .pick_folder()
-            {
-                self.mutate(workers, LibraryEdit::Attach(id, path));
-            }
-        }
-        if ui
-            .selectable_label(self.folder.is_none(), "All files")
-            .clicked()
-        {
-            self.folder = None;
-        }
-        let mut rows = Vec::new();
-        let mut seen = BTreeSet::new();
-        for bank in self
-            .groups
-            .iter()
-            .filter(|bank| self.active.is_none() || Some(bank.id) == self.active)
-        {
-            for source in &bank.sources {
-                if !seen.insert(source.path.clone()) {
-                    continue;
-                }
-                let status = match &source.availability {
-                    Availability::Online => "",
-                    Availability::Offline => " · Offline",
-                    Availability::Unavailable(_) => " · Unavailable",
-                };
-                let name = source
-                    .path
-                    .file_name()
-                    .unwrap_or(source.path.as_os_str())
-                    .to_string_lossy();
-                rows.push(TreeRow::Folder {
-                    path: source.path.clone(),
-                    name: format!("{name}  ({}){status}", source.count),
-                    depth: 0,
-                    expandable: true,
-                    source: Some(source.id),
-                });
-                self.children(&source.path, 1, &mut rows);
-            }
-        }
-        if rows.is_empty() {
-            ui.label("No source folders in this view.");
-        }
-        let mut action = None;
-        let mut toggle = None;
-        let mut page_choice = None;
-        let mut requests = Vec::new();
-        let height = (ui.available_height() - 10.0).max(60.0);
-        egui::ScrollArea::vertical()
-            .id_salt(("library-folders", self.active))
-            .max_height(height)
-            .auto_shrink([false, false])
-            .show_rows(ui, 26.0, rows.len(), |ui, range| {
-                for index in range {
-                    ui.push_id(index, |ui| match &rows[index] {
-                        TreeRow::Folder {
-                            path,
-                            name,
-                            depth,
-                            expandable,
-                            source,
-                        } => {
-                            ui.horizontal(|ui| {
-                                ui.add_space((*depth as f32 * 13.0).min(104.0));
-                                if *expandable {
-                                    if folder_toggle(ui, self.expanded.contains(path), name)
-                                        .clicked()
-                                    {
-                                        toggle = Some(path.clone());
-                                    }
-                                } else {
-                                    ui.add_space(17.0);
-                                }
-                                let response = ui
-                                    .add_sized(
-                                        [ui.available_width(), 24.0],
-                                        egui::Button::selectable(
-                                            self.folder.as_ref() == Some(path),
-                                            name,
-                                        )
-                                        .right_text("")
-                                        .truncate()
-                                        .selected(self.folder.as_ref() == Some(path)),
-                                    )
-                                    .on_hover_text(path.display().to_string());
-                                if response.clicked() {
-                                    self.folder = Some(path.clone());
-                                }
-                                if let (Some(library), Some(source)) = (self.active, source) {
-                                    response.context_menu(|ui| {
-                                        if ui
-                                            .add_enabled(
-                                                can_edit,
-                                                egui::Button::new("Rescan source folder"),
-                                            )
-                                            .clicked()
-                                        {
-                                            action = Some(Action::Scan(path.clone()));
-                                            ui.close();
-                                        }
-                                        if ui
-                                            .add_enabled(
-                                                can_edit,
-                                                egui::Button::new("Remove source folder..."),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.dialog = Some(Dialog::Remove {
-                                                edit: LibraryEdit::Detach(library, *source),
-                                                label: name.clone(),
-                                            });
-                                            ui.close();
-                                        }
-                                    });
-                                }
-                            });
-                        }
-                        TreeRow::Loading { parent, depth } => {
-                            ui.horizontal(|ui| {
-                                ui.add_space((*depth as f32 * 13.0).min(104.0));
-                                ui.label(RichText::new("Loading folders...").weak());
-                            });
-                            requests.push(parent.clone());
-                        }
-                        TreeRow::Pager {
-                            parent,
-                            depth,
-                            offset,
-                            total,
-                        } => {
-                            ui.horizontal(|ui| {
-                                ui.add_space((*depth as f32 * 13.0).min(104.0));
-                                if ui
-                                    .add_enabled(*offset > 0, egui::Button::new("‹"))
-                                    .clicked()
-                                {
-                                    page_choice = Some((
-                                        parent.clone(),
-                                        offset.saturating_sub(FOLDER_PAGE_SIZE),
-                                    ));
-                                }
-                                ui.label(format!(
-                                    "{}–{} / {total}",
-                                    offset + 1,
-                                    (offset + FOLDER_PAGE_SIZE).min(*total)
-                                ));
-                                if ui
-                                    .add_enabled(
-                                        offset + FOLDER_PAGE_SIZE < *total,
-                                        egui::Button::new("›"),
-                                    )
-                                    .clicked()
-                                {
-                                    page_choice = Some((parent.clone(), offset + FOLDER_PAGE_SIZE));
-                                }
-                            });
-                        }
-                    });
-                }
-            });
-        if let Some(path) = toggle {
-            self.toggle_folder(&path);
-        }
-        if let Some((parent, offset)) = page_choice {
-            self.offsets.insert(parent.clone(), offset);
-            self.pages.remove(&parent);
-        }
-        for parent in requests {
-            if self.expanded.contains(&parent)
-                && self.error.is_none()
-                && !self.pending.contains(&parent)
-                && workers.folders(
-                    self.generation,
-                    parent.clone(),
-                    self.offsets.get(&parent).copied().unwrap_or(0),
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("FOLDERS").strong());
+            let response = ui
+                .add_enabled(
+                    can_edit && self.active.is_some(),
+                    egui::Button::new("+").small(),
                 )
+                .on_hover_text("Add source folder...");
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    can_edit && self.active.is_some(),
+                    "Add source folder",
+                )
+            });
+            if let Some(id) = self.active
+                && response.clicked()
             {
-                self.pending.insert(parent);
+                #[cfg(windows)]
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Add a source folder to this library")
+                    .pick_folder()
+                {
+                    self.mutate(workers, LibraryEdit::Attach(id, path));
+                }
             }
-        }
+        });
+        let action = self.tree_ui(ui, workers, can_edit);
         if before != self.scope() {
             Some(Action::ScopeChanged)
         } else {
@@ -866,35 +690,11 @@ impl Libraries {
     }
 }
 
-fn folder_toggle(ui: &mut egui::Ui, open: bool, name: &str) -> egui::Response {
-    let response = ui.add_sized([18.0, 22.0], egui::Button::new("").frame(false));
-    let label = format!("{} {name}", if open { "Collapse" } else { "Expand" });
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
-    });
-    let centre = response.rect.center();
-    let offsets = if open {
-        [(-4.0, -2.0), (4.0, -2.0), (0.0, 3.0)]
-    } else {
-        [(-2.0, -4.0), (-2.0, 4.0), (3.0, 0.0)]
-    };
-    let points = offsets
-        .into_iter()
-        .map(|(x, y)| centre + egui::vec2(x, y))
-        .collect();
-    ui.painter().add(egui::Shape::convex_polygon(
-        points,
-        Color32::GRAY,
-        egui::Stroke::NONE,
-    ));
-    response.on_hover_text(label)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::catalog::{Catalog, Folder};
-    use crate::libraries::Source;
+    use crate::libraries::{Availability, Source, SourceId};
     use crate::worker::Event;
     use std::sync::mpsc;
     use std::time::Duration;

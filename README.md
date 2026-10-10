@@ -46,9 +46,16 @@ cargo fmt --all -- --check
 The desktop opens by default. Choose the drive icon for **Libraries**, use **New**
 to create a bank, and **Add source folder...** to register existing directories.
 Choose a bank for all its sounds, or a folder for that branch and its descendants.
-**All files** restores the bank scope. **Ctrl+F** focuses search in the current
+**All sounds** restores the bank scope. **Ctrl+F** focuses search in the current
 scope. Right-click a bank to rename/remove it or a source to rescan/remove its
 registration. Source audio stays in place.
+
+The folder tree separates opening a branch (chevron) from choosing its sounds
+(name). Source folders have drive icons and cached counts/status; subfolders
+have folder icons and hierarchy guides. Click the breadcrumb path above search
+to return to a parent. In the focused tree, Up/Down move focus, Left/Right
+close/open branches, Enter chooses the sound scope, and Home/End move to the
+first/last loaded folder. Keyboard focus and the selected sound scope are distinct.
 
 **Live updates** watches registered Windows folders automatically. Add, change,
 rename, move, or remove sounds and the index follows after a brief settling

@@ -156,6 +156,7 @@ struct Browser {
     last_index_refresh: Instant,
     folder: Option<PathBuf>,
     smoke: Option<PathBuf>,
+    smoke_subfolder: Option<PathBuf>,
     screenshot_requested: bool,
     capture_writer: Option<JoinHandle<std::io::Result<()>>>,
     capture_passed: Arc<AtomicBool>,
@@ -223,6 +224,10 @@ impl Browser {
             automatic_scan: false,
             last_index_refresh: Instant::now(),
             folder: options.folder,
+            smoke_subfolder: options
+                .smoke_screenshot
+                .as_ref()
+                .and_then(|_| std::env::var_os("SIFT_SMOKE_SUBFOLDER").map(PathBuf::from)),
             smoke: options.smoke_screenshot,
             screenshot_requested: false,
             capture_writer: None,
@@ -325,7 +330,21 @@ impl Browser {
                     }
                 }
                 Event::Libraries(result) => {
-                    if self.libraries.snapshot(result) {
+                    let changed = self.libraries.snapshot(result);
+                    let scoped = if let Some(relative) = self.smoke_subfolder.take() {
+                        if self.libraries.select_smoke_subfolder(relative) {
+                            true
+                        } else {
+                            eprintln!(
+                                "Smoke folder must be a relative subfolder of the active library's first source"
+                            );
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if changed || scoped {
                         self.reset_query();
                     }
                 }
@@ -1520,6 +1539,7 @@ impl eframe::App for Browser {
             });
         egui::Panel::left("browser-sidebar")
             .resizable(true)
+            .min_size(220.0)
             .default_size(260.0)
             .show(ui, |ui| {
                 if self.sidebar == Sidebar::Libraries {
@@ -1609,6 +1629,7 @@ impl eframe::App for Browser {
             );
         }
         if !ctx.egui_wants_keyboard_input()
+            && (self.sidebar != Sidebar::Libraries || !self.libraries.tree_has_focus(&ctx))
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
         {
             self.toggle_preview();
