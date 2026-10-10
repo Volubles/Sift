@@ -93,7 +93,7 @@ pub enum Error {
     Database(#[from] rusqlite::Error),
     #[error("Source could not be read: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Unsupported collection schema {0}; this application supports schema 2")]
+    #[error("Unsupported collection schema {0}; this application supports schema 3")]
     UnsupportedSchema(i64),
     #[error("This file is not a Sift collection database")]
     WrongDatabase,
@@ -131,7 +131,7 @@ impl Store {
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         let application: i64 =
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        if version != 2 {
+        if version != 3 {
             return Err(Error::UnsupportedSchema(version));
         }
         if application != APPLICATION_ID {
@@ -150,7 +150,7 @@ impl Store {
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         let application: i64 =
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(Error::UnsupportedSchema(version));
         }
         if version == 0 && application == 0 {
@@ -162,11 +162,39 @@ impl Store {
             transaction.execute_batch(include_str!("schema.sql"))?;
             transaction.execute_batch(include_str!("migration-2.sql"))?;
             transaction.commit()?;
-        } else if !(1..=2).contains(&version) || application != APPLICATION_ID {
+        } else if !(1..=3).contains(&version) || application != APPLICATION_ID {
             return Err(Error::WrongDatabase);
         } else if version == 1 {
             let transaction = connection.transaction()?;
             transaction.execute_batch(include_str!("migration-2.sql"))?;
+            transaction.commit()?;
+        }
+        if version <= 2 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE entries ADD COLUMN name_key TEXT NOT NULL DEFAULT ''",
+            )?;
+            let mut after = 0i64;
+            loop {
+                let rows: Vec<(i64, String)> = {
+                    let mut statement = transaction
+                        .prepare("SELECT id,name FROM entries WHERE id>?1 ORDER BY id LIMIT 128")?;
+                    statement
+                        .query_map([after], |row| Ok((row.get(0)?, row.get(1)?)))?
+                        .collect::<std::result::Result<_, _>>()?
+                };
+                if rows.is_empty() {
+                    break;
+                }
+                for (id, name) in rows {
+                    transaction.execute(
+                        "UPDATE entries SET name_key=?1 WHERE id=?2",
+                        params![name.to_lowercase(), id],
+                    )?;
+                    after = id;
+                }
+            }
+            transaction.execute_batch(include_str!("migration-3.sql"))?;
             transaction.commit()?;
         }
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -266,11 +294,11 @@ impl Store {
             return Err(Error::NotFound);
         }
         for (reference, (size, modified)) in references.iter().zip(revisions) {
-            transaction.execute("INSERT INTO entries(collection_id,source_path,name,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT(collection_id,source_path) DO NOTHING",
+            transaction.execute("INSERT INTO entries(collection_id,source_path,name,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error,name_key) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(collection_id,source_path) DO NOTHING",
                 params![collection.0, path_codec::encode(&reference.source), reference.name,
                     reference.display_path, reference.format, size as i64, modified,
                     reference.audio.duration_seconds, reference.audio.sample_rate,
-                    reference.audio.channels, reference.audio.bit_depth, reference.metadata_error])?;
+                    reference.audio.channels, reference.audio.bit_depth, reference.metadata_error, reference.name.to_lowercase()])?;
         }
         transaction.commit()?;
         Ok(())
@@ -293,17 +321,65 @@ impl Store {
         anchor: &Path,
         target: &Path,
     ) -> Result<crate::search::SelectionSources> {
+        self.entry_selection_sources_ordered(
+            collection,
+            crate::search::SortOrder::INSERTION,
+            anchor,
+            target,
+        )
+    }
+
+    pub fn entry_selection_sources_ordered(
+        &mut self,
+        collection: CollectionId,
+        order: crate::search::SortOrder,
+        anchor: &Path,
+        target: &Path,
+    ) -> Result<crate::search::SelectionSources> {
         Ok(crate::search::selection::range_sources(
             &mut self.connection,
-            crate::search::selection::OrderedTable::Entries,
-            "collection_id=?1",
-            vec![rusqlite::types::Value::Integer(collection.0)],
+            crate::search::selection::OrderedView {
+                table: crate::search::selection::OrderedTable::Entries,
+                condition: "collection_id=?1",
+                values: vec![rusqlite::types::Value::Integer(collection.0)],
+                order,
+            },
             anchor,
             target,
         )?)
     }
 
+    pub fn entry_selection_positions(
+        &mut self,
+        collection: CollectionId,
+        order: crate::search::SortOrder,
+        active: &Path,
+        anchor: Option<&Path>,
+    ) -> Result<crate::search::SelectionPositions> {
+        Ok(crate::search::selection::positions(
+            &mut self.connection,
+            crate::search::selection::OrderedView {
+                table: crate::search::selection::OrderedTable::Entries,
+                condition: "collection_id=?1",
+                values: vec![rusqlite::types::Value::Integer(collection.0)],
+                order,
+            },
+            active,
+            anchor,
+        )?)
+    }
+
     pub fn entries(&mut self, collection: CollectionId, offset: usize) -> Result<Page<Entry>> {
+        self.entries_ordered(collection, crate::search::SortOrder::INSERTION, offset)
+    }
+
+    pub fn entries_ordered(
+        &mut self,
+        collection: CollectionId,
+        order: crate::search::SortOrder,
+        offset: usize,
+    ) -> Result<Page<Entry>> {
+        let order = order.sql();
         let sql_offset = i64::try_from(offset).map_err(|_| Error::InvalidReference)?;
         let transaction = self.connection.transaction()?;
         if !transaction.query_row(
@@ -319,7 +395,7 @@ impl Store {
             |row| sql_count(row, 0),
         )?;
         let raw = {
-            let mut statement = transaction.prepare("SELECT id,source_path,name,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error FROM entries WHERE collection_id=?1 ORDER BY id LIMIT ?2 OFFSET ?3")?;
+            let mut statement = transaction.prepare(&format!("SELECT id,source_path,name,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error FROM entries WHERE collection_id=?1 ORDER BY {order} LIMIT ?2 OFFSET ?3"))?;
             let mut rows = statement.query(params![collection.0, PAGE_SIZE as i64, sql_offset])?;
             let mut raw = Vec::new();
             while let Some(row) = rows.next()? {

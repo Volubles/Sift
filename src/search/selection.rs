@@ -1,69 +1,86 @@
-use super::SelectionSources;
+use super::{SelectionPositions, SelectionSources, SortOrder, order::OrderKey};
 use crate::path_codec;
 use rusqlite::{
-    Connection, OptionalExtension, params_from_iter,
+    Connection, OptionalExtension, Transaction, params_from_iter,
     types::{Type, Value},
 };
 use std::path::Path;
 
 pub(crate) const MAX_SELECTION_KEYS: usize = 1_000_000;
 pub(crate) const MAX_SELECTION_BYTES: usize = 8 * 1024 * 1024;
+#[derive(Clone, Copy)]
 pub(crate) enum OrderedTable {
     Samples,
     Favorites,
     Entries,
 }
 
-/// Resolve exact native locators in one snapshot. Rebuilding the catalog can
-/// replace its IDs; concurrent edits can also shift previously displayed rows.
+impl OrderedTable {
+    fn sql(self) -> &'static str {
+        match self {
+            Self::Samples => "samples s",
+            Self::Favorites => "favorites",
+            Self::Entries => "entries",
+        }
+    }
+}
+
+fn endpoint(
+    transaction: &Transaction<'_>,
+    view: &OrderedView<'_>,
+    path: &Path,
+) -> rusqlite::Result<Option<OrderKey>> {
+    let mut values = view.values.clone();
+    let parameter = values.len() + 1;
+    values.push(Value::Blob(path_codec::encode(path)));
+    let sql = format!(
+        "SELECT {},name_key,id FROM {} WHERE ({}) AND source_path=?{parameter}",
+        view.order.column(),
+        view.table.sql(),
+        view.condition
+    );
+    transaction
+        .query_row(&sql, params_from_iter(&values), |row| {
+            Ok(OrderKey {
+                value: row.get(0)?,
+                name: row.get(1)?,
+                id: row.get(2)?,
+            })
+        })
+        .optional()
+}
+
+pub(crate) struct OrderedView<'a> {
+    pub table: OrderedTable,
+    pub condition: &'a str,
+    pub values: Vec<Value>,
+    pub order: SortOrder,
+}
+
+/// Endpoints, ordered membership and rows share one snapshot, including NULLs.
 pub(crate) fn range_sources(
     connection: &mut Connection,
-    table: OrderedTable,
-    condition: &str,
-    mut values: Vec<Value>,
+    view: OrderedView<'_>,
     anchor: &Path,
     target: &Path,
 ) -> rusqlite::Result<SelectionSources> {
-    let (table, name) = match table {
-        OrderedTable::Samples => ("samples s", "name_key"),
-        OrderedTable::Favorites => ("favorites", "name_key"),
-        OrderedTable::Entries => ("entries", "''"),
-    };
     let transaction = connection.transaction()?;
-    let endpoint_parameter = values.len() + 1;
-    let endpoint_sql = format!(
-        "SELECT {name},id FROM {table} WHERE ({condition}) AND source_path=?{endpoint_parameter}"
-    );
-    let mut endpoint = |path| {
-        values.push(Value::Blob(path_codec::encode(path)));
-        let result = transaction
-            .query_row(&endpoint_sql, params_from_iter(&values), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .optional();
-        values.pop();
-        result
-    };
-    let (Some(first), Some(last)) = (endpoint(anchor)?, endpoint(target)?) else {
+    let (Some(first), Some(last)) = (
+        endpoint(&transaction, &view, anchor)?,
+        endpoint(&transaction, &view, target)?,
+    ) else {
         return Ok(SelectionSources::MissingEndpoint);
     };
-    let (first, last) = if first <= last {
-        (first, last)
-    } else {
-        (last, first)
-    };
-    let start = values.len() + 1;
-    values.extend([
-        Value::Text(first.0),
-        Value::Integer(first.1),
-        Value::Text(last.0),
-        Value::Integer(last.1),
-    ]);
+    let mut values = view.values.clone();
+    let after_first = view.order.boundary(&first, false, true, &mut values);
+    let before_last = view.order.boundary(&last, true, true, &mut values);
+    let after_last = view.order.boundary(&last, false, true, &mut values);
+    let before_first = view.order.boundary(&first, true, true, &mut values);
     let sql = format!(
-        "SELECT source_path FROM {table} WHERE ({condition}) AND ({name},id)>=(?{start},?{}) AND ({name},id)<=(?{},?{}) ORDER BY {name},id LIMIT {}",
-        start + 1,
-        start + 2,
-        start + 3,
+        "SELECT source_path FROM {} WHERE ({}) AND (({after_first} AND {before_last}) OR ({after_last} AND {before_first})) ORDER BY {} LIMIT {}",
+        view.table.sql(),
+        view.condition,
+        view.order.sql(),
         MAX_SELECTION_KEYS + 1
     );
     let mut sources = Vec::new();
@@ -84,4 +101,42 @@ pub(crate) fn range_sources(
     }
     transaction.commit()?;
     Ok(SelectionSources::Ready(sources))
+}
+
+/// Relocate native identities without loading preceding rows into application memory.
+pub(crate) fn positions(
+    connection: &mut Connection,
+    view: OrderedView<'_>,
+    active: &Path,
+    anchor: Option<&Path>,
+) -> rusqlite::Result<SelectionPositions> {
+    let transaction = connection.transaction()?;
+    let locate = |path: &Path| -> rusqlite::Result<Option<usize>> {
+        let Some(key) = endpoint(&transaction, &view, path)? else {
+            return Ok(None);
+        };
+        let mut parameters = view.values.clone();
+        let before = view.order.boundary(&key, true, false, &mut parameters);
+        let sql = format!(
+            "SELECT count(*) FROM {} WHERE ({}) AND ({before})",
+            view.table.sql(),
+            view.condition
+        );
+        let count: i64 =
+            transaction.query_row(&sql, params_from_iter(&parameters), |row| row.get(0))?;
+        usize::try_from(count).map(Some).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(0, Type::Integer, Box::new(error))
+        })
+    };
+    let cursor = locate(active)?;
+    let anchor = match anchor {
+        Some(path) if path == active => cursor,
+        Some(path) => locate(path)?,
+        None => None,
+    };
+    transaction.commit()?;
+    Ok(SelectionPositions {
+        active: cursor,
+        anchor,
+    })
 }

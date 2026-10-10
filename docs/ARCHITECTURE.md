@@ -131,6 +131,11 @@ ready results. The UI consumes each internal drag payload once at handoff.
 
 ## Build configuration
 
+Catalog schema 4 and saved-reference schema 3 add indexed sound ordering.
+Page reads, ranges, and native cursor/anchor lookup share a typed ordering rule;
+numeric unknowns sort last. Existing saved entry IDs and insertion order survive
+the transactional migration. See [Sound ordering](SORTING.md).
+
 `rust-toolchain.toml` pins Rust 1.98.1; the package uses edition 2024 and tracks
 `Cargo.lock`. The desktop uses egui/eframe 0.36.2 with Glow, and RFD 0.17.2 for
 the Windows folder picker. SQLite is bundled through rusqlite 0.40.2.

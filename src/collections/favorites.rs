@@ -108,18 +108,67 @@ impl Store {
         anchor: &Path,
         target: &Path,
     ) -> Result<crate::search::SelectionSources> {
+        self.favorite_selection_sources_ordered(
+            query,
+            crate::search::SortOrder::default(),
+            anchor,
+            target,
+        )
+    }
+
+    pub fn favorite_selection_sources_ordered(
+        &mut self,
+        query: &SearchQuery,
+        order: crate::search::SortOrder,
+        anchor: &Path,
+        target: &Path,
+    ) -> Result<crate::search::SelectionSources> {
         let (condition, values) = favorite_condition(query);
         Ok(crate::search::selection::range_sources(
             &mut self.connection,
-            crate::search::selection::OrderedTable::Favorites,
-            condition,
-            values,
+            crate::search::selection::OrderedView {
+                table: crate::search::selection::OrderedTable::Favorites,
+                condition,
+                values,
+                order,
+            },
             anchor,
             target,
         )?)
     }
 
+    pub fn favorite_selection_positions(
+        &mut self,
+        query: &SearchQuery,
+        order: crate::search::SortOrder,
+        active: &Path,
+        anchor: Option<&Path>,
+    ) -> Result<crate::search::SelectionPositions> {
+        let (condition, values) = favorite_condition(query);
+        Ok(crate::search::selection::positions(
+            &mut self.connection,
+            crate::search::selection::OrderedView {
+                table: crate::search::selection::OrderedTable::Favorites,
+                condition,
+                values,
+                order,
+            },
+            active,
+            anchor,
+        )?)
+    }
+
     pub fn favorites(&mut self, query: &SearchQuery, offset: usize) -> Result<Page<Favorite>> {
+        self.favorites_ordered(query, crate::search::SortOrder::default(), offset)
+    }
+
+    pub fn favorites_ordered(
+        &mut self,
+        query: &SearchQuery,
+        order: crate::search::SortOrder,
+        offset: usize,
+    ) -> Result<Page<Favorite>> {
+        let order = order.sql();
         let (condition, mut values) = favorite_condition(query);
         let transaction = self.connection.transaction()?;
         let total = transaction.query_row(
@@ -135,7 +184,7 @@ impl Store {
         ));
         let raw = {
             let sql = format!(
-                "SELECT id,source_path,name,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error FROM favorites WHERE {condition} ORDER BY name_key,id LIMIT ?{limit} OFFSET ?{skip}"
+                "SELECT id,source_path,name,display_path,format,size_bytes,modified_ns,duration_seconds,sample_rate,channels,bit_depth,metadata_error FROM favorites WHERE {condition} ORDER BY {order} LIMIT ?{limit} OFFSET ?{skip}"
             );
             let mut statement = transaction.prepare(&sql)?;
             let mut rows = statement.query(params_from_iter(&values))?;

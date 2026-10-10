@@ -82,7 +82,7 @@ impl Catalog {
         connection.busy_timeout(Duration::from_secs(2))?;
         connection.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 3 {
+        if version > 4 {
             return Err(Error::UnsupportedSchema(version));
         }
         if version == 0 {
@@ -151,6 +151,11 @@ impl Catalog {
             }
             transaction.commit()?;
         }
+        if version <= 3 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(include_str!("migration-4.sql"))?;
+            transaction.commit()?;
+        }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         Ok(Self { connection })
     }
@@ -159,7 +164,7 @@ impl Catalog {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_secs(2))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != 3 {
+        if version != 4 {
             return Err(Error::UnsupportedSchema(version));
         }
         Ok(Self { connection })
@@ -255,7 +260,18 @@ impl Catalog {
         scope: &Scope,
         offset: usize,
     ) -> Result<SearchPage> {
+        self.search_ordered(query, scope, crate::search::SortOrder::default(), offset)
+    }
+
+    pub fn search_ordered(
+        &mut self,
+        query: &SearchQuery,
+        scope: &Scope,
+        order: crate::search::SortOrder,
+        offset: usize,
+    ) -> Result<SearchPage> {
         let (condition, mut values) = search_condition(query, scope)?;
+        let order = order.sql();
         // Count and rows share a snapshot even while the indexer commits batches.
         let transaction = self.connection.transaction()?;
         let total: i64 = transaction.query_row(
@@ -271,7 +287,7 @@ impl Catalog {
             i64::try_from(offset).map_err(|_| Error::OutOfRange)?,
         ));
         let sql = format!(
-            "SELECT s.id, s.source_path, s.name, s.path, s.format, s.size_bytes, s.duration_seconds, s.sample_rate, s.channels, s.bit_depth, s.metadata_error,s.modified_ns,s.created_ns FROM samples s WHERE {condition} ORDER BY s.name_key, s.id LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}"
+            "SELECT s.id, s.source_path, s.name, s.path, s.format, s.size_bytes, s.duration_seconds, s.sample_rate, s.channels, s.bit_depth, s.metadata_error,s.modified_ns,s.created_ns FROM samples s WHERE {condition} ORDER BY {order} LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}"
         );
         let mut rows_out = Vec::with_capacity(PAGE_SIZE);
         {
@@ -296,14 +312,56 @@ impl Catalog {
         anchor: &Path,
         target: &Path,
     ) -> Result<crate::search::SelectionSources> {
+        self.selection_sources_ordered(
+            query,
+            scope,
+            crate::search::SortOrder::default(),
+            anchor,
+            target,
+        )
+    }
+
+    pub fn selection_sources_ordered(
+        &mut self,
+        query: &SearchQuery,
+        scope: &Scope,
+        order: crate::search::SortOrder,
+        anchor: &Path,
+        target: &Path,
+    ) -> Result<crate::search::SelectionSources> {
         let (condition, values) = search_condition(query, scope)?;
         Ok(crate::search::selection::range_sources(
             &mut self.connection,
-            crate::search::selection::OrderedTable::Samples,
-            &condition,
-            values,
+            crate::search::selection::OrderedView {
+                table: crate::search::selection::OrderedTable::Samples,
+                condition: &condition,
+                values,
+                order,
+            },
             anchor,
             target,
+        )?)
+    }
+
+    pub fn selection_positions(
+        &mut self,
+        query: &SearchQuery,
+        scope: &Scope,
+        order: crate::search::SortOrder,
+        active: &Path,
+        anchor: Option<&Path>,
+    ) -> Result<crate::search::SelectionPositions> {
+        let (condition, values) = search_condition(query, scope)?;
+        Ok(crate::search::selection::positions(
+            &mut self.connection,
+            crate::search::selection::OrderedView {
+                table: crate::search::selection::OrderedTable::Samples,
+                condition: &condition,
+                values,
+                order,
+            },
+            active,
+            anchor,
         )?)
     }
 
@@ -313,12 +371,27 @@ impl Catalog {
         scope: &Scope,
         selection: &crate::search::SourceSelection,
     ) -> Result<Vec<crate::collections::Reference>> {
+        self.selected_references_ordered(
+            query,
+            scope,
+            crate::search::SortOrder::default(),
+            selection,
+        )
+    }
+
+    pub fn selected_references_ordered(
+        &mut self,
+        query: &SearchQuery,
+        scope: &Scope,
+        order: crate::search::SortOrder,
+        selection: &crate::search::SourceSelection,
+    ) -> Result<Vec<crate::collections::Reference>> {
         let (condition, values) = search_condition(query, scope)?;
         let transaction = self.connection.transaction()?;
         let identities = crate::search::batch::selected_rows(
             &transaction,
             "samples s",
-            "s.name_key,s.id",
+            &order.sql(),
             &condition,
             values,
             selection,

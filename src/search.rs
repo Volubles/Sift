@@ -1,7 +1,9 @@
 use crate::{Error, Result};
 
 pub(crate) mod batch;
+mod order;
 pub(crate) mod selection;
+pub use order::{SelectionPositions, SortDirection, SortField, SortOrder};
 
 pub const MAX_ACTION_SOUNDS: usize = 128;
 

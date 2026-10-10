@@ -1,0 +1,10 @@
+CREATE INDEX entries_name_order ON entries(collection_id,name_key,id);
+CREATE INDEX entries_format_order ON entries(collection_id,format,name_key,id);
+CREATE INDEX entries_length_order ON entries(collection_id,duration_seconds,name_key,id);
+CREATE INDEX entries_rate_order ON entries(collection_id,sample_rate,name_key,id);
+CREATE INDEX entries_channels_order ON entries(collection_id,channels,name_key,id);
+CREATE INDEX favorites_format_order ON favorites(format,name_key,id);
+CREATE INDEX favorites_length_order ON favorites(duration_seconds,name_key,id);
+CREATE INDEX favorites_rate_order ON favorites(sample_rate,name_key,id);
+CREATE INDEX favorites_channels_order ON favorites(channels,name_key,id);
+PRAGMA user_version=3;
