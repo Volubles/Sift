@@ -25,6 +25,11 @@ audio. Marking all results or starring a sound does not restart playback.
 Holding F does not repeatedly toggle the star. Pending favorite saves retain
 the existing edit guard; failures remain available for retry or discard.
 
+Keyboard audition keeps the current scroll position while the activated row is
+fully visible. Crossing the viewport edge scrolls only enough to reveal that row;
+the list does not recenter it. This also applies to Shift-navigation and uses the
+collection content viewport when the sidebar list has a limited height.
+
 ## Pages, updates, and scope
 
 Each list retains one active reference for shortcuts even when its page is evicted.

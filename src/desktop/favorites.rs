@@ -390,6 +390,7 @@ impl Favorites {
                     .id_salt(("favorites", self.view_generation))
                     .auto_shrink([false, false]),
                 0,
+                ui.available_height(),
             )
             .show_rows(ui, 28.0, self.total, |ui, range| {
                 let first_visible = range.start;

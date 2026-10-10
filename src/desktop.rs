@@ -827,6 +827,7 @@ impl Browser {
                     .id_salt(("samples", self.view_generation))
                     .auto_shrink([false, false]),
                 0,
+                ui.available_height(),
             )
             .show_rows(ui, 28.0, self.library_view.total, |ui, range| {
                 let first_visible = range.start;

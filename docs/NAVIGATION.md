@@ -5,6 +5,10 @@ restores its position and prepares its selected sound without starting playback.
 Clicking a sound or navigating with W/S or Up/Down still auditions it when
 auto-play is enabled.
 
+Auditioning a visible row leaves the viewport in place. Keyboard movement past
+an edge reveals the next row with the smallest necessary scroll, preserving your
+position rather than centering each newly activated sound.
+
 ## Remembered state
 
 | View | State |

@@ -393,14 +393,25 @@ impl Selection {
         ui: &egui::Ui,
         area: egui::ScrollArea,
         origin: usize,
+        viewport_height: f32,
     ) -> egui::ScrollArea {
         if let Some(index) = self
             .scroll
             .take()
             .or_else(|| self.navigation.map(|target| target.0))
         {
-            let offset = index.saturating_sub(origin) as f32 * (28.0 + ui.spacing().item_spacing.y)
-                - ui.available_height() * 0.5;
+            let top = index.saturating_sub(origin) as f32 * (28.0 + ui.spacing().item_spacing.y);
+            let bottom = top + 28.0;
+            let height = viewport_height.max(28.0);
+            // Keep visible rows stationary; reveal an off-screen row at the
+            // nearest edge rather than recentering on every audition.
+            let offset = if top < self.scroll_offset {
+                top
+            } else if bottom > self.scroll_offset + height {
+                bottom - height
+            } else {
+                self.scroll_offset
+            };
             area.vertical_scroll_offset(offset.max(0.0))
         } else {
             area.vertical_scroll_offset(self.scroll_offset)

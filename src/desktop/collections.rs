@@ -774,6 +774,7 @@ impl Collections {
                             .id_salt(("collection-entries", collection.0))
                             .max_height(height),
                         page.offset,
+                        height.min(ui.available_height()),
                     )
                     .show_rows(ui, 28.0, page.rows.len(), |ui, range| {
                         let first_visible = page.offset + range.start;
