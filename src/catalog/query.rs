@@ -3,7 +3,11 @@ use rusqlite::{Transaction, params_from_iter, types::Value};
 use super::{Scope, SearchPage, sample_from_row, scope_condition};
 use crate::{
     Error, Result,
-    search::{Boundary, OrderKey, PAGE_SIZE, SearchQuery, SortOrder, selection::OrderedTable},
+    search::{
+        Boundary, LibraryQuery, OrderKey, PAGE_SIZE, SearchQuery, SortOrder,
+        filters::{Channels, Format, Length, MetadataFilters, SampleRate, UnknownLengths},
+        selection::OrderedTable,
+    },
 };
 
 pub(super) struct QueryPlan {
@@ -13,8 +17,9 @@ pub(super) struct QueryPlan {
 }
 
 impl QueryPlan {
-    pub fn new(query: &SearchQuery, scope: &Scope) -> Result<Self> {
-        let (table, condition, mut values) = match query {
+    pub fn new(query: &LibraryQuery, scope: &Scope) -> Result<Self> {
+        query.filters.validate()?;
+        let (table, condition, mut values) = match &query.text {
             SearchQuery::All => (OrderedTable::Samples, "1", vec![]),
             SearchQuery::FilenamePrefix { lower, upper } => (
                 OrderedTable::Samples,
@@ -28,13 +33,14 @@ impl QueryPlan {
             ),
         };
         let scope = scope_condition(scope, &mut values)?;
-        let condition = if scope == "1" {
+        let mut condition = if scope == "1" {
             condition.to_owned()
         } else if condition == "1" {
             scope
         } else {
             format!("({condition}) AND ({scope})")
         };
+        append_filters(query.filters, &mut condition, &mut values);
         Ok(Self {
             table,
             condition,
@@ -44,6 +50,60 @@ impl QueryPlan {
 
     pub fn from(&self) -> &'static str {
         self.table.sql()
+    }
+}
+
+fn append_filters(filters: MetadataFilters, condition: &mut String, values: &mut Vec<Value>) {
+    let mut predicates = Vec::with_capacity(4);
+    match filters.length {
+        Length::Any => {}
+        Length::Unknown => predicates.push("s.duration_seconds IS NULL".to_owned()),
+        Length::Range { min, max, unknown } => {
+            let mut bounds = Vec::with_capacity(2);
+            for (value, operator) in [(min, ">="), (max, "<=")] {
+                if let Some(value) = value {
+                    values.push(Value::Real(value));
+                    bounds.push(format!("s.duration_seconds{operator}?{}", values.len()));
+                }
+            }
+            let range = bounds.join(" AND ");
+            predicates.push(match unknown {
+                UnknownLengths::Exclude => format!("({range})"),
+                UnknownLengths::Include => format!("(s.duration_seconds IS NULL OR ({range}))"),
+            });
+        }
+    }
+    if !filters.formats.is_empty() {
+        let mut parameters = Vec::with_capacity(5);
+        for format in Format::ALL
+            .into_iter()
+            .filter(|format| filters.formats.contains(*format))
+        {
+            for extension in format.extensions() {
+                values.push(Value::Text((*extension).to_owned()));
+                parameters.push(format!("?{}", values.len()));
+            }
+        }
+        predicates.push(format!("s.format IN ({})", parameters.join(",")));
+    }
+    match filters.channels {
+        Channels::Any => {}
+        Channels::Unknown => predicates.push("s.channels IS NULL".to_owned()),
+        choice => {
+            values.push(Value::Integer(if choice == Channels::Mono { 1 } else { 2 }));
+            predicates.push(format!("s.channels=?{}", values.len()));
+        }
+    }
+    match filters.sample_rate {
+        SampleRate::Any => {}
+        SampleRate::Unknown => predicates.push("s.sample_rate IS NULL".to_owned()),
+        SampleRate::Hz(rate) => {
+            values.push(Value::Integer(i64::from(rate)));
+            predicates.push(format!("s.sample_rate=?{}", values.len()));
+        }
+    }
+    if !predicates.is_empty() {
+        *condition = format!("({condition}) AND {}", predicates.join(" AND "));
     }
 }
 

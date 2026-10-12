@@ -1,10 +1,28 @@
 use crate::{Error, Result};
 
 pub(crate) mod batch;
+pub mod filters;
 mod order;
 pub(crate) use order::{Boundary, OrderKey};
 pub(crate) mod selection;
 pub use order::{SelectionPositions, SortDirection, SortField, SortOrder};
+
+/// One captured library view: literal text and metadata predicates travel
+/// together through page, range, relocation, collection and drag requests.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LibraryQuery {
+    pub text: SearchQuery,
+    pub filters: filters::MetadataFilters,
+}
+
+impl From<SearchQuery> for LibraryQuery {
+    fn from(text: SearchQuery) -> Self {
+        Self {
+            text,
+            filters: Default::default(),
+        }
+    }
+}
 
 pub const MAX_ACTION_SOUNDS: usize = 128;
 

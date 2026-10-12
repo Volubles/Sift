@@ -7,7 +7,7 @@ use super::{
 use crate::{
     catalog::{Sample, Scope, SearchPage},
     collections::Reference,
-    search::{PAGE_SIZE, SearchQuery},
+    search::{LibraryQuery, PAGE_SIZE, SearchQuery},
     worker::Workers,
 };
 
@@ -15,7 +15,7 @@ use crate::{
 pub(super) struct LibraryView {
     pub selection: Selection,
     pub query_text: String,
-    pub query: SearchQuery,
+    pub query: LibraryQuery,
     pub total: usize,
     pub order: crate::search::SortOrder,
     pub pages: Pages<Sample>,
@@ -54,7 +54,7 @@ impl LibraryView {
         self.pages.clear();
         match SearchQuery::parse(&self.query_text) {
             Ok(query) => {
-                self.query = query;
+                self.query.text = query;
                 self.error = None;
                 Some(self.selection.first_visible() / PAGE_SIZE * PAGE_SIZE)
             }

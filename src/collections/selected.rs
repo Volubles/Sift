@@ -3,12 +3,12 @@ use rusqlite::types::Value;
 use super::{CollectionId, Reference, Result, Store};
 use crate::{
     catalog::Scope,
-    search::{SearchQuery, SourceSelection},
+    search::{LibraryQuery, SearchQuery, SourceSelection},
 };
 
 #[derive(Clone, Debug)]
 pub enum SelectionOrigin {
-    Library { query: SearchQuery, scope: Scope },
+    Library { query: LibraryQuery, scope: Scope },
     Favorites { query: SearchQuery },
     Collection(CollectionId),
 }

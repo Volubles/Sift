@@ -4,7 +4,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags, params, params_from_iter, types::Value};
 
 use crate::library::{AudioMetadata, FileStamp, PROBE_VERSION};
-use crate::search::SearchQuery;
+use crate::search::{LibraryQuery, SearchQuery};
 use crate::{Error, Result, path_codec};
 
 mod query;
@@ -267,12 +267,17 @@ impl Catalog {
         scope: &Scope,
         offset: usize,
     ) -> Result<SearchPage> {
-        self.search_ordered(query, scope, crate::search::SortOrder::default(), offset)
+        self.search_ordered(
+            &query.clone().into(),
+            scope,
+            crate::search::SortOrder::default(),
+            offset,
+        )
     }
 
     pub fn search_ordered(
         &mut self,
-        query: &SearchQuery,
+        query: &LibraryQuery,
         scope: &Scope,
         order: crate::search::SortOrder,
         offset: usize,
@@ -296,7 +301,7 @@ impl Catalog {
         target: &Path,
     ) -> Result<crate::search::SelectionSources> {
         self.selection_sources_ordered(
-            query,
+            &query.clone().into(),
             scope,
             crate::search::SortOrder::default(),
             anchor,
@@ -306,7 +311,7 @@ impl Catalog {
 
     pub fn selection_sources_ordered(
         &mut self,
-        query: &SearchQuery,
+        query: &LibraryQuery,
         scope: &Scope,
         order: crate::search::SortOrder,
         anchor: &Path,
@@ -328,7 +333,7 @@ impl Catalog {
 
     pub fn selection_positions(
         &mut self,
-        query: &SearchQuery,
+        query: &LibraryQuery,
         scope: &Scope,
         order: crate::search::SortOrder,
         active: &Path,
@@ -355,7 +360,7 @@ impl Catalog {
         selection: &crate::search::SourceSelection,
     ) -> Result<Vec<crate::collections::Reference>> {
         self.selected_references_ordered(
-            query,
+            &query.clone().into(),
             scope,
             crate::search::SortOrder::default(),
             selection,
@@ -364,7 +369,7 @@ impl Catalog {
 
     pub fn selected_references_ordered(
         &mut self,
-        query: &SearchQuery,
+        query: &LibraryQuery,
         scope: &Scope,
         order: crate::search::SortOrder,
         selection: &crate::search::SourceSelection,

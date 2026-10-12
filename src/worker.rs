@@ -12,7 +12,7 @@ use crate::collections::{Availability, Reference};
 use crate::libraries::{self, Library, LibraryId, SourceId};
 use crate::library::FileStamp;
 use crate::library::{self, Cancellation, ScanReport};
-use crate::search::SearchQuery;
+use crate::search::{LibraryQuery, SearchQuery};
 mod index;
 
 #[derive(Debug)]
@@ -64,7 +64,7 @@ pub enum Event {
 
 struct QueryRequest {
     generation: u64,
-    query: SearchQuery,
+    query: LibraryQuery,
     order: crate::search::SortOrder,
     offset: usize,
     scope: Scope,
@@ -74,7 +74,7 @@ enum ReadRequest {
     Search(QueryRequest),
     Positions {
         generation: u64,
-        query: SearchQuery,
+        query: LibraryQuery,
         scope: Scope,
         order: crate::search::SortOrder,
         active: PathBuf,
@@ -82,7 +82,7 @@ enum ReadRequest {
     },
     Selection {
         generation: u64,
-        query: SearchQuery,
+        query: LibraryQuery,
         scope: Scope,
         order: crate::search::SortOrder,
         anchor: PathBuf,
@@ -385,7 +385,7 @@ impl Workers {
     ) -> bool {
         self.selection_ordered(
             generation,
-            query,
+            query.into(),
             scope,
             crate::search::SortOrder::default(),
             anchor,
@@ -396,7 +396,7 @@ impl Workers {
     pub fn selection_ordered(
         &self,
         generation: u64,
-        query: SearchQuery,
+        query: LibraryQuery,
         scope: Scope,
         order: crate::search::SortOrder,
         anchor: PathBuf,
@@ -421,7 +421,7 @@ impl Workers {
     pub fn positions(
         &self,
         generation: u64,
-        query: SearchQuery,
+        query: LibraryQuery,
         scope: Scope,
         order: crate::search::SortOrder,
         active: PathBuf,
@@ -457,7 +457,7 @@ impl Workers {
     ) -> bool {
         self.query_ordered(
             generation,
-            query,
+            query.into(),
             scope,
             crate::search::SortOrder::default(),
             offset,
@@ -467,7 +467,7 @@ impl Workers {
     pub fn query_ordered(
         &self,
         generation: u64,
-        query: SearchQuery,
+        query: LibraryQuery,
         scope: Scope,
         order: crate::search::SortOrder,
         offset: usize,
