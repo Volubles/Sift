@@ -133,3 +133,24 @@ helpers remain local. End-to-end search during indexing, representative sound
 names, long audio, external drives, active scrolling, and GPU/device costs need
 their own measurements; this comparison does not certify the desktop search
 budget in [Performance](PERFORMANCE.md).
+
+## View-ownership cleanup repeat
+
+A release repeat on 2026-10-12 after the view-ownership cleanup used the same
+fixture, harness, power plan and protocol above. All 240 totals, row counts and
+ordered-ID signatures match the preceding optimized build; the database hash
+is unchanged.
+
+| Warm page scenario | Before cleanup p95 | After cleanup p95 |
+| --- | --- | --- |
+| All sounds, first page | 0.200–0.558 ms | 0.203–0.598 ms |
+| Folder, deep page | 32.010–46.490 ms | 31.743–46.177 ms |
+| Broad text, deep page | 32.542–61.426 ms | 31.159–63.220 ms |
+
+Harness wall time was 80.172 to 79.813 seconds; process CPU time was 79.641 to
+79.078 seconds. Sampled peak private memory was 7.078 to 6.750 MiB, and peak
+working set was 11.355 to 11.359 MiB. Total work and the larger page timings
+remain similar in these single runs. Smaller operations also varied: empty-query
+p95 spanned 0.006–0.031 before and 0.006–0.138 ms after; this outlier is retained.
+These observations support preserving the measured catalog behavior through
+the cleanup and do not qualify desktop frame cost or end-to-end search latency.
