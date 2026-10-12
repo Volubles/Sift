@@ -15,6 +15,8 @@ pub(crate) const MAX_SELECTION_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) enum OrderedTable {
     Samples,
     SamplesMatchingText,
+    TaggedSamples,
+    TaggedSamplesMatchingText,
     Favorites,
     Entries,
 }
@@ -24,6 +26,12 @@ impl OrderedTable {
         match self {
             Self::Samples => "samples s",
             Self::SamplesMatchingText => "samples_fts JOIN samples s ON s.id=samples_fts.rowid",
+            Self::TaggedSamples => {
+                "(SELECT source_path AS tagged_source,tag_id AS selected_tag_id FROM manual_tags.sound_tags) mt JOIN samples s ON s.source_path=mt.tagged_source"
+            }
+            Self::TaggedSamplesMatchingText => {
+                "(SELECT source_path AS tagged_source,tag_id AS selected_tag_id FROM manual_tags.sound_tags) mt JOIN samples s ON s.source_path=mt.tagged_source JOIN samples_fts ON s.id=samples_fts.rowid"
+            }
             Self::Favorites => "favorites",
             Self::Entries => "entries",
         }

@@ -20,6 +20,7 @@ All core workflows run locally without accounts or network services.
 | `library` | Source enumeration, metadata probing, revisions, and synchronization |
 | `catalog` / `search` | Searchable metadata, folder queries, and query semantics |
 | `libraries` / `collections` | Durable library registrations and saved references |
+| `tags` | Durable manual associations, bounded tag reads/edits, and tag filter identities |
 | `worker` | Catalog read/index owners and bounded desktop requests |
 | `audio` | Decoding, rate conversion, buffering, and output-device ownership |
 | `waveform` | Peak analysis and derived cache |
@@ -41,11 +42,14 @@ produces corresponding companion databases.
 | `catalog.sqlite` | Schema-4 metadata, native locators, FTS5 index, and derived folders | Rebuildable |
 | `catalog.libraries.sqlite` | Schema-1 named libraries and source registrations | Durable |
 | `catalog.collections.sqlite` | Schema-3 collections, entries, and global favorites | Durable |
+| `catalog.tags.sqlite` | Schema-1 tag names and native-source associations | Durable |
 | `catalog.waveforms.sqlite` | Versioned min/max peaks keyed by source revision | Rebuildable |
 
 Durable IDs are independent of catalog row IDs. Rebuilding the catalog leaves
 libraries, collections, and favorites intact. Schema changes use transactions;
 unsupported versions and failed migrations return errors without resetting data.
+Manual tags also survive index rebuilding; their bounded owner and shared query
+predicates are described in [Tags](TAGS.md).
 
 SQLite connections have explicit worker owners. The index owner has a writable
 catalog connection and owns library registration changes. Search uses an

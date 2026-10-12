@@ -5,6 +5,7 @@ pub mod config;
 pub mod libraries;
 pub mod library;
 pub mod search;
+pub mod tags;
 pub mod watch;
 pub mod waveform;
 pub mod worker;
@@ -21,6 +22,8 @@ mod path_codec;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Tags(#[from] tags::Error),
     #[error(transparent)]
     Selection(#[from] search::SelectionError),
     #[error("File operation failed: {0}")]

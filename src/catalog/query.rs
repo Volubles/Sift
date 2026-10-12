@@ -14,12 +14,13 @@ pub(super) struct QueryPlan {
     pub table: OrderedTable,
     pub condition: String,
     pub values: Vec<Value>,
+    pub tags: bool,
 }
 
 impl QueryPlan {
     pub fn new(query: &LibraryQuery, scope: &Scope) -> Result<Self> {
         query.filters.validate()?;
-        let (table, condition, mut values) = match &query.text {
+        let (mut table, condition, mut values) = match &query.text {
             SearchQuery::All => (OrderedTable::Samples, "1", vec![]),
             SearchQuery::FilenamePrefix { lower, upper } => (
                 OrderedTable::Samples,
@@ -41,10 +42,27 @@ impl QueryPlan {
             format!("({condition}) AND ({scope})")
         };
         append_filters(query.filters, &mut condition, &mut values);
+        for (index, id) in query.tags.ids().iter().enumerate() {
+            values.push(Value::Integer(id.0));
+            if index == 0 {
+                table = if matches!(table, OrderedTable::SamplesMatchingText) {
+                    OrderedTable::TaggedSamplesMatchingText
+                } else {
+                    OrderedTable::TaggedSamples
+                };
+                condition = format!("({condition}) AND mt.selected_tag_id=?{}", values.len());
+            } else {
+                condition = format!(
+                    "({condition}) AND EXISTS(SELECT 1 FROM manual_tags.sound_tags st WHERE st.tag_id=?{} AND st.source_path=s.source_path)",
+                    values.len()
+                );
+            }
+        }
         Ok(Self {
             table,
             condition,
             values,
+            tags: !query.tags.is_empty(),
         })
     }
 
@@ -123,6 +141,7 @@ struct CachedCount {
     condition: String,
     values: Vec<Value>,
     external_revision: i64,
+    tag_revision: Option<i64>,
     local_changes: u64,
     total: usize,
 }
@@ -140,9 +159,24 @@ impl QueryState {
             transaction
                 .pragma_query_value(Some("main"), "data_version", |row| row.get::<_, i64>(0))?;
         let local_changes = transaction.total_changes();
+        let tag_revision = if plan.tags {
+            transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM manual_tags.sound_tags LIMIT 1)",
+                [],
+                |r| r.get::<_, bool>(0),
+            )?;
+            Some(
+                transaction.pragma_query_value(Some("manual_tags"), "data_version", |r| {
+                    r.get::<_, i64>(0)
+                })?,
+            )
+        } else {
+            None
+        };
         if let Some(cached) = &self.cached
             && cached.external_revision == external_revision
             && cached.local_changes == local_changes
+            && cached.tag_revision == tag_revision
             && cached.from == plan.from()
             && cached.condition == plan.condition
             && cached.values == plan.values
@@ -181,6 +215,7 @@ impl QueryState {
                 condition: plan.condition.clone(),
                 values: plan.values.clone(),
                 external_revision,
+                tag_revision,
                 local_changes,
                 total,
             })

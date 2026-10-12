@@ -34,6 +34,7 @@ struct SavedView {
     total: usize,
     order: crate::search::SortOrder,
     filters: crate::search::filters::MetadataFilters,
+    tags: crate::tags::Filter,
 }
 
 impl RetainedState for SavedView {
@@ -41,6 +42,7 @@ impl RetainedState for SavedView {
         self.selection.retained_bytes()
             + self.query_text.capacity()
             + size_of::<crate::search::filters::MetadataFilters>()
+            + self.tags.retained_bytes()
     }
 }
 
@@ -181,6 +183,11 @@ impl LibraryView {
         } else {
             Default::default()
         };
+        let initial_tags = if self.location.library == location.library {
+            self.query.tags.clone()
+        } else {
+            Default::default()
+        };
         let previous = std::mem::replace(&mut self.location, location);
         let restored = self.saved.switch(
             previous,
@@ -190,6 +197,7 @@ impl LibraryView {
                 total: self.total,
                 order: self.order,
                 filters: self.query.filters,
+                tags: self.query.tags.clone(),
             },
             &self.location,
         );
@@ -199,6 +207,7 @@ impl LibraryView {
             total: 0,
             order: initial_order,
             filters: initial_filters,
+            tags: initial_tags,
         });
         self.selection = restored.selection;
         self.selection.resume(previous_generation);
@@ -206,6 +215,7 @@ impl LibraryView {
         self.total = restored.total;
         self.order = restored.order;
         self.query.filters = restored.filters;
+        self.query.tags = restored.tags;
         self.filter_editor = Editor::default();
         self.view_generation += 1;
         true

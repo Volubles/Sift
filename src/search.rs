@@ -13,6 +13,7 @@ pub use order::{SelectionPositions, SortDirection, SortField, SortOrder};
 pub struct LibraryQuery {
     pub text: SearchQuery,
     pub filters: filters::MetadataFilters,
+    pub tags: crate::tags::Filter,
 }
 
 impl From<SearchQuery> for LibraryQuery {
@@ -20,6 +21,7 @@ impl From<SearchQuery> for LibraryQuery {
         Self {
             text,
             filters: Default::default(),
+            tags: Default::default(),
         }
     }
 }
@@ -107,7 +109,7 @@ impl SearchQuery {
     }
 }
 
-fn prefix_successor(prefix: &str) -> Option<String> {
+pub(crate) fn prefix_successor(prefix: &str) -> Option<String> {
     let mut chars: Vec<_> = prefix.chars().collect();
     while let Some(last) = chars.pop() {
         let mut next = u32::from(last) + 1;

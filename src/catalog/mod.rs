@@ -69,6 +69,8 @@ pub struct IndexedFile {
 pub struct Catalog {
     connection: Connection,
     query_state: QueryState,
+    tag_database: PathBuf,
+    tags_attached: bool,
 }
 
 impl Catalog {
@@ -161,11 +163,16 @@ impl Catalog {
         Ok(Self {
             connection,
             query_state: QueryState::default(),
+            tag_database: crate::tags::data_path(path),
+            tags_attached: false,
         })
     }
 
     pub fn open_reader(path: &Path) -> Result<Self> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let connection = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+        )?;
         connection.busy_timeout(Duration::from_secs(2))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version != SCHEMA_VERSION {
@@ -174,7 +181,28 @@ impl Catalog {
         Ok(Self {
             connection,
             query_state: QueryState::default(),
+            tag_database: crate::tags::data_path(path),
+            tags_attached: false,
         })
+    }
+
+    fn attach_tags(&mut self, query: &LibraryQuery) -> Result<()> {
+        if query.tags.is_empty() || self.tags_attached {
+            return Ok(());
+        }
+        let uri = crate::tags::readonly_uri(&self.tag_database)?;
+        self.connection
+            .execute("ATTACH DATABASE ?1 AS manual_tags", [uri])?;
+        if let Err(validation) = crate::tags::validate_schema(&self.connection, "manual_tags") {
+            if let Err(cleanup) = self.connection.execute("DETACH DATABASE manual_tags", []) {
+                return Err(Error::InvalidQuery(format!(
+                    "Tag data validation failed: {validation}; detaching unusable data also failed: {cleanup}"
+                )));
+            }
+            return Err(validation.into());
+        }
+        self.tags_attached = true;
+        Ok(())
     }
 
     pub fn register_root(&mut self, root: &Path) -> Result<i64> {
@@ -283,6 +311,7 @@ impl Catalog {
         offset: usize,
     ) -> Result<SearchPage> {
         let plan = QueryPlan::new(query, scope)?;
+        self.attach_tags(query)?;
         // Counts, memo invalidation and rows share a main-database snapshot.
         let transaction = self.connection.transaction()?;
         let total = self.query_state.get(&transaction, &plan)?;
@@ -318,6 +347,7 @@ impl Catalog {
         target: &Path,
     ) -> Result<crate::search::SelectionSources> {
         let plan = QueryPlan::new(query, scope)?;
+        self.attach_tags(query)?;
         Ok(crate::search::selection::range_sources(
             &mut self.connection,
             crate::search::selection::OrderedView {
@@ -340,6 +370,7 @@ impl Catalog {
         anchor: Option<&Path>,
     ) -> Result<crate::search::SelectionPositions> {
         let plan = QueryPlan::new(query, scope)?;
+        self.attach_tags(query)?;
         Ok(crate::search::selection::positions(
             &mut self.connection,
             crate::search::selection::OrderedView {
@@ -375,6 +406,7 @@ impl Catalog {
         selection: &crate::search::SourceSelection,
     ) -> Result<Vec<crate::collections::Reference>> {
         let plan = QueryPlan::new(query, scope)?;
+        self.attach_tags(query)?;
         let transaction = self.connection.transaction()?;
         let identities = crate::search::batch::selected_rows(
             &transaction,
