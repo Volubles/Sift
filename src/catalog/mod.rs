@@ -28,12 +28,7 @@ pub struct Sample {
     pub stamp: Option<FileStamp>,
 }
 
-#[derive(Debug)]
-pub struct SearchPage {
-    pub total: usize,
-    pub offset: usize,
-    pub rows: Vec<Sample>,
-}
+pub type SearchPage = crate::search::Page<Sample>;
 
 /// Native directory ranges; display text is never used to locate or filter files.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

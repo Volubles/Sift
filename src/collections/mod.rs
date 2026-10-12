@@ -14,6 +14,7 @@ use crate::{catalog::Sample, library::AudioMetadata, path_codec};
 
 use crate::search::MAX_ACTION_SOUNDS;
 pub use crate::search::PAGE_SIZE;
+pub use crate::search::Page;
 pub(crate) const SCHEMA_VERSION: i64 = 3;
 const APPLICATION_ID: i64 = 0x5346_434c;
 
@@ -74,13 +75,6 @@ pub struct Entry {
     pub id: EntryId,
     pub reference: Reference,
     pub availability: Availability,
-}
-
-#[derive(Debug)]
-pub struct Page<T> {
-    pub total: usize,
-    pub offset: usize,
-    pub rows: Vec<T>,
 }
 
 #[derive(Debug, thiserror::Error)]

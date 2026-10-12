@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{
     Arc,
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, RichText};
 
 use crate::audio::player::Player;
-use crate::catalog::{Sample, SampleId, SearchPage};
+use crate::catalog::{Sample, SampleId};
 use crate::collections::favorites::{Favorite, FavoriteId};
 use crate::collections::{
     Availability, Entry, EntryId, Reference, worker::Worker as CollectionWorker,
@@ -29,6 +29,8 @@ mod libraries;
 mod preview;
 use preview::Preview;
 mod library_view;
+mod pages;
+use pages::Pages;
 mod navigation;
 mod selection;
 use library_view::LibraryView;
@@ -140,8 +142,7 @@ struct Browser {
     drag_error: Option<String>,
     generation: u64,
     view_generation: u64,
-    pages: VecDeque<SearchPage>,
-    pending: BTreeSet<usize>,
+    pages: Pages<Sample>,
     ready: bool,
     error: Option<String>,
     scan: Option<ScanReport>,
@@ -194,8 +195,7 @@ impl Browser {
             drag_error: None,
             generation: 0,
             view_generation: 0,
-            pages: VecDeque::new(),
-            pending: BTreeSet::new(),
+            pages: Pages::default(),
             ready: false,
             error: None,
             scan: None,
@@ -342,7 +342,6 @@ impl Browser {
         self.favorite_paths_dirty = true;
         self.generation += 1;
         self.pages.clear();
-        self.pending.clear();
         match SearchQuery::parse(&self.library_view.query_text) {
             Ok(query) => {
                 self.library_view.query = query;
@@ -363,7 +362,6 @@ impl Browser {
             .invalidate_selection(self.library_view.selection.generation());
         self.generation += 1;
         self.pages.clear();
-        self.pending.clear();
         self.request_list_positions();
         self.request_page(0);
     }
@@ -387,8 +385,7 @@ impl Browser {
     fn request_page(&mut self, offset: usize) {
         if self.ready
             && self.error.is_none()
-            && !self.pending.contains(&offset)
-            && !self.pages.iter().any(|page| page.offset == offset)
+            && self.pages.needs(offset)
             && self.workers.query_ordered(
                 self.generation,
                 self.library_view.query.clone(),
@@ -397,7 +394,7 @@ impl Browser {
                 offset,
             )
         {
-            self.pending.insert(offset);
+            self.pages.requested(offset);
         }
     }
 
@@ -505,7 +502,6 @@ impl Browser {
                 {
                     Ok(page) => {
                         self.library_view.total = page.total;
-                        self.pending.remove(&page.offset);
                         if self.sidebar != Sidebar::Favorites {
                             self.preview.refresh_catalog(&page.rows);
                         }
@@ -523,11 +519,11 @@ impl Browser {
                                     .remember(Reference::from(sample));
                             }
                         }
-                        insert_page(&mut self.pages, page);
+                        self.pages.insert(page);
                         self.favorite_paths_dirty = true;
                     }
                     Err(message) => {
-                        self.pending.clear();
+                        self.pages.clear_pending();
                         eprintln!("Sift search failed: {message}");
                         self.error = Some(format!("Search failed: {message}"));
                     }
@@ -863,7 +859,7 @@ impl Browser {
             self.request_page(0);
         }
         if self.library_view.total == 0 {
-            if !self.pending.is_empty() {
+            if self.pages.has_pending() {
                 ui.label("Searching...");
             } else if self.library_view.query_text.is_empty() {
                 ui.label(
@@ -1216,16 +1212,6 @@ impl Drop for Browser {
                 Err(_) => eprintln!("Sift capture worker panicked during shutdown"),
             }
         }
-    }
-}
-
-fn insert_page(pages: &mut VecDeque<SearchPage>, page: SearchPage) {
-    pages.retain(|cached| cached.offset != page.offset);
-    pages.push_back(page);
-    // Keep recent requested pages, not the numerically largest offsets. Scrolling
-    // back to an earlier page must not evict that page immediately.
-    while pages.len() > 4 {
-        pages.pop_front();
     }
 }
 

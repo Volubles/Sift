@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Color32, RichText};
@@ -10,6 +10,7 @@ use crate::collections::{
 };
 use crate::search::{PAGE_SIZE, SearchQuery};
 
+use super::pages::Pages;
 use super::sound_table::{reference_row, table_heading};
 use super::{
     SoundKey,
@@ -24,8 +25,7 @@ pub(super) struct Favorites {
     order: crate::search::SortOrder,
     generation: u64,
     view_generation: u64,
-    pages: VecDeque<Page<Favorite>>,
-    pending: BTreeSet<usize>,
+    pages: Pages<Favorite>,
     pub(super) total: usize,
     active: bool,
     desired: BTreeSet<PathBuf>,
@@ -104,7 +104,6 @@ impl Favorites {
         self.selection.refresh();
         self.generation += 1;
         self.pages.clear();
-        self.pending.clear();
     }
 
     pub(super) fn track(&mut self, paths: BTreeSet<PathBuf>) {
@@ -167,11 +166,10 @@ impl Favorites {
 
     fn request_page(&mut self, worker: &Worker, offset: usize) {
         if self.error.is_none()
-            && !self.pending.contains(&offset)
-            && !self.pages.iter().any(|page| page.offset == offset)
+            && self.pages.needs(offset)
             && worker.favorites_ordered(self.generation, self.query.clone(), self.order, offset)
         {
-            self.pending.insert(offset);
+            self.pages.requested(offset);
         }
     }
 
@@ -190,7 +188,6 @@ impl Favorites {
         self.selection.reorder();
         self.generation += 1;
         self.pages.clear();
-        self.pending.clear();
     }
 
     pub(super) fn page(&mut self, generation: u64, result: Result<Page<Favorite>, String>) {
@@ -200,7 +197,6 @@ impl Favorites {
         match result {
             Ok(page) => {
                 self.total = page.total;
-                self.pending.remove(&page.offset);
                 for (position, sound) in page.rows.iter().enumerate() {
                     self.selection.observe(
                         SoundKey::Favorite(sound.id),
@@ -208,15 +204,11 @@ impl Favorites {
                         &sound.reference.source,
                     );
                 }
-                self.pages.retain(|cached| cached.offset != page.offset);
-                self.pages.push_back(page);
-                while self.pages.len() > 4 {
-                    self.pages.pop_front();
-                }
+                self.pages.insert(page);
             }
             Err(error) => {
                 eprintln!("Favorites page failed: {error}");
-                self.pending.clear();
+                self.pages.clear_pending();
                 self.error = Some(format!("Could not read favorites: {error}"));
             }
         }
@@ -394,7 +386,7 @@ impl Favorites {
         }
         self.request(worker, ready);
         if self.total == 0 {
-            ui.label(if !self.pending.is_empty() {
+            ui.label(if self.pages.has_pending() {
                 "Loading favorites..."
             } else if self.query_text.is_empty() {
                 "Star a sound in Libraries or Collections to save it here."

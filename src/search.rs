@@ -35,7 +35,15 @@ pub enum SelectionSources {
 }
 
 pub const PAGE_SIZE: usize = 128;
+pub(crate) const MAX_CACHED_PAGES: usize = 4;
 const MAX_QUERY_CHARS: usize = 256;
+
+#[derive(Debug)]
+pub struct Page<T> {
+    pub total: usize,
+    pub offset: usize,
+    pub rows: Vec<T>,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SearchQuery {

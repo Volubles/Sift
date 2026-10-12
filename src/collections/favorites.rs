@@ -7,7 +7,8 @@ use rusqlite::{params, params_from_iter, types::Value};
 use super::{Availability, Error, PAGE_SIZE, Page, Reference, Result, Store};
 use crate::{path_codec, search::SearchQuery};
 
-pub const MAX_STATUS_PATHS: usize = 4 * PAGE_SIZE + PAGE_SIZE + 1;
+// Catalog cache, one collection page, and the active preview reference.
+pub const MAX_STATUS_PATHS: usize = (crate::search::MAX_CACHED_PAGES + 1) * PAGE_SIZE + 1;
 const MAX_STATUS_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
