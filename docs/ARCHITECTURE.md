@@ -59,6 +59,15 @@ Descriptors above 64 KiB are counted without retention. Text matching joins FTS
 IDs to live samples, and page queries select compact IDs before loading at most
 128 metadata rows. No persistent schema or audio data is added for this cache.
 
+The same query owner retains one page anchor with its actual SQL first/last
+sort keys, at most 2 KiB of key data per endpoint. Matching criteria, revision,
+order, and adjacent offset permit a forward/backward seek; other requests use
+random access. Unrestricted nullable metadata orders retain the indexed offset
+path where it measured cheaper. Random pages can start from the nearer end
+using the verified count; backward traversal reverses NULL placement and tie
+keys, then restores the visible order on the bounded result. No table of all
+result IDs is retained. See [Search measurements](SEARCH-PERFORMANCE.md).
+
 Collection group commands carry the captured query, folder scope, native marks,
 and destination ID. The collection actor resolves the full marked set before
 saving, using one lazy read-only catalog connection for library selections.

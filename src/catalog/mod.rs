@@ -8,7 +8,7 @@ use crate::search::SearchQuery;
 use crate::{Error, Result, path_codec};
 
 mod query;
-use query::{QueryCount, QueryPlan};
+use query::{QueryPlan, QueryState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SampleId(pub i64);
@@ -71,7 +71,7 @@ pub struct IndexedFile {
 
 pub struct Catalog {
     connection: Connection,
-    query_count: QueryCount,
+    query_state: QueryState,
 }
 
 impl Catalog {
@@ -163,7 +163,7 @@ impl Catalog {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         Ok(Self {
             connection,
-            query_count: QueryCount::default(),
+            query_state: QueryState::default(),
         })
     }
 
@@ -176,7 +176,7 @@ impl Catalog {
         }
         Ok(Self {
             connection,
-            query_count: QueryCount::default(),
+            query_state: QueryState::default(),
         })
     }
 
@@ -283,8 +283,10 @@ impl Catalog {
         let plan = QueryPlan::new(query, scope)?;
         // Counts, memo invalidation and rows share a main-database snapshot.
         let transaction = self.connection.transaction()?;
-        let total = self.query_count.get(&transaction, &plan)?;
-        let page = query::page(&transaction, &plan, order, offset, total)?;
+        let total = self.query_state.get(&transaction, &plan)?;
+        let page = self
+            .query_state
+            .page(&transaction, &plan, order, offset, total)?;
         transaction.commit()?;
         Ok(page)
     }

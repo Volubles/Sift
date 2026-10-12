@@ -68,3 +68,8 @@ on a local temporary database, with no audio files, rendering, or device work.
 Other desktop activity was not recorded. They do not certify the end-to-end
 search target, memory use, or representative-library performance. Broad-match
 queries and deep folder pages remain concrete optimization work.
+
+The [subsequent search/pagination comparison](SEARCH-PERFORMANCE.md) uses one
+fixed fixture for both revisions and includes sequential and random deep pages.
+It supersedes these initial costs for the optimized catalog; neither run
+qualifies whole-application search or audio latency.

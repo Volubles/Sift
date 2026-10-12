@@ -33,6 +33,9 @@ different stages and cannot substitute for those end-to-end observations.
 - [Sound ordering](SORTING.md#sql-measurement) records warm ordered SQL pages and
   cursor lookup on 100,000 generated metadata rows, including broad-match and
   deep-folder limitations.
+- [Search and pagination comparison](SEARCH-PERFORMANCE.md) records before/after
+  latency, correctness signatures, CPU time, and process memory on one fixed
+  100,000-row fixture.
 
 The index fixture used tiny generated WAV files. Unchanged refreshes improved,
 while initial import remained slower than the preceding implementation.

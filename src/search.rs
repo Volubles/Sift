@@ -2,6 +2,7 @@ use crate::{Error, Result};
 
 pub(crate) mod batch;
 mod order;
+pub(crate) use order::{Boundary, OrderKey};
 pub(crate) mod selection;
 pub use order::{SelectionPositions, SortDirection, SortField, SortOrder};
 
