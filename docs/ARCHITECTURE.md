@@ -15,6 +15,7 @@ All core workflows run locally without accounts or network services.
 | `desktop::navigation` | Bounded inactive view caches shared by the library, tree, and collection owners |
 | `desktop::libraries` | Library registrations, folder scopes, breadcrumbs, and tree navigation |
 | `desktop::collections` / `favorites` | Saved-reference views and pending edits |
+| `desktop::saved` | Shared saved-storage worker, operation IDs, and reply routing between the two independent views |
 | `library` | Source enumeration, metadata probing, revisions, and synchronization |
 | `catalog` / `search` | Searchable metadata, folder queries, and query semantics |
 | `libraries` / `collections` | Durable library registrations and saved references |
@@ -50,6 +51,12 @@ catalog connection and owns library registration changes. Search uses an
 independent read-only connection. A separate collection worker owns saved edits
 and favorite reads. Accepted durable changes drain during shutdown even when
 completion events are no longer read by the UI.
+
+The desktop's saved-storage owner routes replies to Collections or Favorites.
+Each view retains its own selection, pages and submitted edit; one operation
+counter identifies edits across both. A failed collection edit does not consume
+or redirect a favorite completion, and the shared actor preserves accepted
+commands when the window closes.
 
 The catalog owns one bounded result-count memo on its connection. Generated SQL
 predicates and native bindings identify the view; direction/column changes reuse

@@ -1,6 +1,7 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::path::PathBuf;
 
 use super::favorites::{Favorites, star_button};
+use super::saved::{PendingSave, Storage};
 use super::{
     SoundKey,
     navigation::{RetainedState, Views},
@@ -10,7 +11,7 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::collections::{
     Availability, Collection, CollectionId, Entry, EntryId, PAGE_SIZE, Page, Reference,
-    worker::{Change, Event, Mutation, Worker},
+    worker::{Change, Event, Mutation},
 };
 
 pub(super) struct Collections {
@@ -18,10 +19,7 @@ pub(super) struct Collections {
     views: Views<CollectionId, CollectionView>,
     restore_preview: bool,
     previous_marks: Option<CollectionMarks>,
-    worker: Worker,
-    pub(super) favorites: Favorites,
     pub(super) favorite_paths_dirty: bool,
-    ready: bool,
     groups: Option<Page<Collection>>,
     groups_generation: u64,
     groups_offset: usize,
@@ -36,8 +34,7 @@ pub(super) struct Collections {
     entries_failed: bool,
     active: Option<CollectionId>,
     error: Option<String>,
-    save: Option<PendingSave>,
-    operation: u64,
+    save: Option<CollectionSave>,
     dialog: Option<Dialog>,
 }
 
@@ -61,10 +58,8 @@ impl RetainedState for CollectionView {
     }
 }
 
-struct PendingSave {
-    operation: u64,
-    mutation: Mutation,
-    error: Option<String>,
+struct CollectionSave {
+    request: PendingSave,
     removed_source: Option<PathBuf>,
 }
 
@@ -102,16 +97,17 @@ impl Collections {
         }
     }
 
-    pub(super) fn suspend_view(&mut self) {
+    pub(super) fn suspend_view(&mut self, storage: &Storage) {
         self.selection.suspend();
-        self.worker
+        storage
+            .worker
             .invalidate_entry_selection(self.selection.generation());
     }
 
-    pub(super) fn resume_view(&mut self) -> Option<(SoundKey, Reference)> {
+    pub(super) fn resume_view(&mut self, storage: &Storage) -> Option<(SoundKey, Reference)> {
         self.restore_preview = false;
         self.refresh_entries();
-        self.request_pages();
+        self.request_pages(storage);
         self.active_reference()
     }
     pub(super) fn selected_count(&self) -> usize {
@@ -144,46 +140,50 @@ impl Collections {
 
     pub(super) fn add_selected(
         &mut self,
+        storage: &mut Storage,
         collection: CollectionId,
         selection: Result<crate::collections::ReferenceSelection, String>,
     ) {
         match selection {
-            Ok(selection) if self.can_edit() => {
+            Ok(selection) if self.can_edit(storage) => {
                 self.error = None;
-                self.mutate(Mutation::AddSelected {
-                    collection,
-                    selection,
-                });
+                self.mutate(
+                    storage,
+                    Mutation::AddSelected {
+                        collection,
+                        selection,
+                    },
+                );
             }
             Err(error) => self.error = Some(error),
             _ => {}
         }
     }
 
-    fn remove_selected(&mut self, collection: CollectionId) {
+    fn remove_selected(&mut self, storage: &mut Storage, collection: CollectionId) {
         let total = self.entries_total;
         match self.selection.snapshot(total) {
             Ok(selection) => {
                 self.error = None;
-                self.mutate(Mutation::RemoveSelected {
-                    collection,
-                    selection,
-                });
+                self.mutate(
+                    storage,
+                    Mutation::RemoveSelected {
+                        collection,
+                        selection,
+                    },
+                );
             }
             Err(error) => self.error = Some(error),
         }
     }
 
-    pub(super) fn new(worker: Worker) -> Self {
+    pub(super) fn new() -> Self {
         Self {
             selection: Selection::default(),
             views: Views::default(),
             restore_preview: false,
             previous_marks: None,
-            worker,
-            favorites: Favorites::default(),
             favorite_paths_dirty: true,
-            ready: false,
             groups: None,
             groups_generation: 0,
             groups_offset: 0,
@@ -199,14 +199,12 @@ impl Collections {
             active: None,
             error: None,
             save: None,
-            operation: 0,
             dialog: None,
         }
     }
 
     pub(super) fn settled(&self) -> bool {
-        self.ready
-            && self.groups.is_some()
+        self.groups.is_some()
             && (self.active.is_none()
                 || self
                     .entries
@@ -216,206 +214,189 @@ impl Collections {
             && self.save.is_none()
     }
 
-    pub(super) fn poll(&mut self) {
-        self.worker
+    pub(super) fn invalidate_selection(&self, storage: &Storage) {
+        storage
+            .worker
             .invalidate_entry_selection(self.selection.generation());
-        while let Some(event) = self.worker.poll() {
-            match event {
-                Event::FavoriteSelection { generation, result } => {
-                    self.favorites.selection_result(generation, result)
+    }
+
+    pub(super) fn storage_ready(&mut self) {
+        self.refresh_groups();
+    }
+
+    pub(super) fn startup_failed(&mut self, error: &str) {
+        eprintln!("Collection storage startup failed: {error}");
+        self.error = Some(format!("Collections unavailable: {error}"));
+    }
+
+    pub(super) fn event(&mut self, storage: &Storage, event: Event) {
+        match event {
+            Event::Positions {
+                generation,
+                origin: crate::collections::SelectionOrigin::Collection(id),
+                result,
+            } if self.active == Some(id) => {
+                if let Some(index) = self.selection.positions_resolved(generation, result) {
+                    self.load_entry_page(storage, index / PAGE_SIZE * PAGE_SIZE);
                 }
-                Event::Positions {
-                    generation,
-                    origin,
-                    result,
-                } => match origin {
-                    crate::collections::SelectionOrigin::Favorites { .. } => {
-                        self.favorites.positions(&self.worker, generation, result)
-                    }
-                    crate::collections::SelectionOrigin::Collection(id)
-                        if self.active == Some(id) =>
-                    {
-                        if let Some(index) = self.selection.positions_resolved(generation, result) {
-                            self.load_entry_page(index / PAGE_SIZE * PAGE_SIZE);
-                        }
-                    }
-                    _ => {}
-                },
-                Event::EntrySelection { generation, result } => {
-                    self.selection.resolved(generation, result)
-                }
-                Event::Ready => {
-                    self.ready = true;
-                    self.refresh_groups();
-                }
-                Event::Favorites { generation, result } => self.favorites.page(generation, result),
-                Event::FavoriteStatus { generation, result } => {
-                    self.favorites.membership(generation, result)
-                }
-                Event::Saved { operation, result } if self.favorites.owns_save(operation) => {
-                    self.favorites.saved(result)
-                }
-                Event::StartupFailed(error) => {
-                    self.favorites.startup_failed(&error);
-                    eprintln!("Collection storage startup failed: {error}");
-                    self.error = Some(format!("Collections unavailable: {error}"));
-                }
-                Event::Groups { generation, result } if generation == self.groups_generation => {
-                    self.groups_pending = false;
-                    match result {
-                        Ok(page) => {
-                            if page.total > 0 && page.offset >= page.total {
-                                self.groups_offset = (page.total - 1) / PAGE_SIZE * PAGE_SIZE;
-                                self.refresh_groups();
-                                continue;
-                            }
-                            if self.active.is_none()
-                                && let Some(collection) = page.rows.first()
-                            {
-                                self.activate(collection.id);
-                            }
-                            self.groups = Some(page);
-                        }
-                        Err(error) => {
-                            self.groups_failed = true;
-                            self.error = Some(format!("Could not read collections: {error}"));
-                        }
-                    }
-                }
-                Event::Entries {
-                    generation,
-                    collection,
-                    result,
-                } if generation == self.entries_generation && self.active == Some(collection) => {
-                    self.entries_pending = false;
-                    match result {
-                        Ok(page) => {
-                            self.entries_total = page.total;
-                            for (position, entry) in page.rows.iter().enumerate() {
-                                self.selection.observe(
-                                    SoundKey::Collection(entry.id),
-                                    page.offset + position,
-                                    &entry.reference.source,
-                                );
-                                if self.selection.active_source()
-                                    == Some(entry.reference.source.as_path())
-                                {
-                                    self.selection.remember(entry.reference.clone());
-                                }
-                            }
-                            if page.total > 0 && page.offset >= page.total {
-                                self.entries_offset = (page.total - 1) / PAGE_SIZE * PAGE_SIZE;
-                                self.refresh_entries();
-                                continue;
-                            }
-                            self.entries = Some(page);
-                            self.favorite_paths_dirty = true;
-                            self.error = None;
-                        }
-                        Err(error) => {
-                            self.entries_failed = true;
-                            self.error = Some(format!("Could not read collection: {error}"));
-                        }
-                    }
-                }
-                Event::Saved { operation, result }
-                    if self
-                        .save
-                        .as_ref()
-                        .is_some_and(|save| save.operation == operation) =>
-                {
-                    match result {
-                        Ok(change) => {
-                            if let Some(save) = self.save.take()
-                                && let Mutation::Remove { collection, .. } = save.mutation
-                                && let Some(source) = save.removed_source
-                            {
-                                if self.active == Some(collection) {
-                                    self.selection.forget(&source);
-                                } else if let Some(mut view) = self.views.take(&collection) {
-                                    view.selection.forget(&source);
-                                    view.total = view.total.saturating_sub(1);
-                                    self.views.remember(collection, view);
-                                }
-                            }
-                            self.dialog = None;
-                            match &change {
-                                Change::Deleted(id) => {
-                                    drop(self.views.take(id));
-                                }
-                                Change::Removed {
-                                    collection,
-                                    sources,
-                                } => {
-                                    if let Some(mut view) = self.views.take(collection) {
-                                        for source in sources {
-                                            view.selection.forget(source);
-                                        }
-                                        view.total = view.total.saturating_sub(sources.len());
-                                        self.views.remember(*collection, view);
-                                    }
-                                }
-                                _ => {}
-                            }
-                            let removed_collection = match &change {
-                                Change::Removed { collection, .. }
-                                | Change::Deleted(collection) => Some(*collection),
-                                _ => None,
-                            };
-                            if self
-                                .previous_marks
-                                .as_ref()
-                                .is_some_and(|marks| Some(marks.collection) == removed_collection)
-                            {
-                                self.previous_marks = None;
-                            }
-                            match change {
-                                Change::Created(id) => {
-                                    self.activate(id);
-                                    self.groups_offset = self
-                                        .groups
-                                        .as_ref()
-                                        .map(|page| page.total / PAGE_SIZE * PAGE_SIZE)
-                                        .unwrap_or(0);
-                                }
-                                Change::Updated(id) if self.active == Some(id) => {
-                                    self.refresh_entries()
-                                }
-                                Change::Removed {
-                                    collection,
-                                    sources,
-                                } if self.active == Some(collection) => {
-                                    for source in sources {
-                                        self.selection.forget(&source);
-                                    }
-                                    self.refresh_entries();
-                                }
-                                Change::Deleted(id) if self.active == Some(id) => {
-                                    self.selection.reset();
-                                    self.favorite_paths_dirty = true;
-                                    self.active = None;
-                                    self.entries = None;
-                                    self.entries_total = 0;
-                                    self.restore_preview = true;
-                                    self.entries_generation += 1;
-                                }
-                                _ => {}
-                            }
-                            self.refresh_groups();
-                        }
-                        Err(error) => {
-                            eprintln!("Collection edit failed: {error}");
-                            if let Some(save) = &mut self.save {
-                                save.error = Some(error);
-                            }
-                        }
-                    }
-                }
-                _ => {} // stale pages/operations cannot replace the active selection
             }
+            Event::EntrySelection { generation, result } => {
+                self.selection.resolved(generation, result)
+            }
+            Event::Groups { generation, result } if generation == self.groups_generation => {
+                self.groups_pending = false;
+                match result {
+                    Ok(page) => {
+                        if page.total > 0 && page.offset >= page.total {
+                            self.groups_offset = (page.total - 1) / PAGE_SIZE * PAGE_SIZE;
+                            self.refresh_groups();
+                            return;
+                        }
+                        if self.active.is_none()
+                            && let Some(collection) = page.rows.first()
+                        {
+                            self.activate(collection.id);
+                        }
+                        self.groups = Some(page);
+                    }
+                    Err(error) => {
+                        self.groups_failed = true;
+                        self.error = Some(format!("Could not read collections: {error}"));
+                    }
+                }
+            }
+            Event::Entries {
+                generation,
+                collection,
+                result,
+            } if generation == self.entries_generation && self.active == Some(collection) => {
+                self.entries_pending = false;
+                match result {
+                    Ok(page) => {
+                        self.entries_total = page.total;
+                        for (position, entry) in page.rows.iter().enumerate() {
+                            self.selection.observe(
+                                SoundKey::Collection(entry.id),
+                                page.offset + position,
+                                &entry.reference.source,
+                            );
+                            if self.selection.active_source()
+                                == Some(entry.reference.source.as_path())
+                            {
+                                self.selection.remember(entry.reference.clone());
+                            }
+                        }
+                        if page.total > 0 && page.offset >= page.total {
+                            self.entries_offset = (page.total - 1) / PAGE_SIZE * PAGE_SIZE;
+                            self.refresh_entries();
+                            return;
+                        }
+                        self.entries = Some(page);
+                        self.favorite_paths_dirty = true;
+                        self.error = None;
+                    }
+                    Err(error) => {
+                        self.entries_failed = true;
+                        self.error = Some(format!("Could not read collection: {error}"));
+                    }
+                }
+            }
+            Event::Saved { operation, result }
+                if self
+                    .save
+                    .as_ref()
+                    .is_some_and(|save| save.request.operation == operation) =>
+            {
+                match result {
+                    Ok(change) => {
+                        if let Some(save) = self.save.take()
+                            && let Mutation::Remove { collection, .. } = save.request.mutation
+                            && let Some(source) = save.removed_source
+                        {
+                            if self.active == Some(collection) {
+                                self.selection.forget(&source);
+                            } else if let Some(mut view) = self.views.take(&collection) {
+                                view.selection.forget(&source);
+                                view.total = view.total.saturating_sub(1);
+                                self.views.remember(collection, view);
+                            }
+                        }
+                        self.dialog = None;
+                        match &change {
+                            Change::Deleted(id) => {
+                                drop(self.views.take(id));
+                            }
+                            Change::Removed {
+                                collection,
+                                sources,
+                            } => {
+                                if let Some(mut view) = self.views.take(collection) {
+                                    for source in sources {
+                                        view.selection.forget(source);
+                                    }
+                                    view.total = view.total.saturating_sub(sources.len());
+                                    self.views.remember(*collection, view);
+                                }
+                            }
+                            _ => {}
+                        }
+                        let removed_collection = match &change {
+                            Change::Removed { collection, .. } | Change::Deleted(collection) => {
+                                Some(*collection)
+                            }
+                            _ => None,
+                        };
+                        if self
+                            .previous_marks
+                            .as_ref()
+                            .is_some_and(|marks| Some(marks.collection) == removed_collection)
+                        {
+                            self.previous_marks = None;
+                        }
+                        match change {
+                            Change::Created(id) => {
+                                self.activate(id);
+                                self.groups_offset = self
+                                    .groups
+                                    .as_ref()
+                                    .map(|page| page.total / PAGE_SIZE * PAGE_SIZE)
+                                    .unwrap_or(0);
+                            }
+                            Change::Updated(id) if self.active == Some(id) => {
+                                self.refresh_entries()
+                            }
+                            Change::Removed {
+                                collection,
+                                sources,
+                            } if self.active == Some(collection) => {
+                                for source in sources {
+                                    self.selection.forget(&source);
+                                }
+                                self.refresh_entries();
+                            }
+                            Change::Deleted(id) if self.active == Some(id) => {
+                                self.selection.reset();
+                                self.favorite_paths_dirty = true;
+                                self.active = None;
+                                self.entries = None;
+                                self.entries_total = 0;
+                                self.restore_preview = true;
+                                self.entries_generation += 1;
+                            }
+                            _ => {}
+                        }
+                        self.refresh_groups();
+                    }
+                    Err(error) => {
+                        eprintln!("Collection edit failed: {error}");
+                        if let Some(save) = &mut self.save {
+                            save.request.error = Some(error);
+                        }
+                    }
+                }
+            }
+            _ => {} // Stale pages/operations cannot replace this view.
         }
-        self.request_pages();
-        self.favorites.request(&self.worker, self.ready);
     }
 
     fn activate(&mut self, id: CollectionId) {
@@ -484,7 +465,7 @@ impl Collections {
         self.entries_failed = false;
     }
 
-    fn load_entry_page(&mut self, offset: usize) {
+    fn load_entry_page(&mut self, storage: &Storage, offset: usize) {
         if self.entries_offset != offset {
             self.selection.remember_scroll(0.0, offset);
         }
@@ -492,10 +473,10 @@ impl Collections {
         self.entries_generation += 1;
         self.entries_pending = false;
         self.entries_failed = false;
-        self.request_pages();
+        self.request_pages(storage);
     }
 
-    fn reorder(&mut self, order: crate::search::SortOrder) {
+    fn reorder(&mut self, storage: &Storage, order: crate::search::SortOrder) {
         self.order = order;
         self.selection.reorder();
         self.entries_offset = 0;
@@ -503,14 +484,14 @@ impl Collections {
         self.entries = None;
         self.entries_pending = false;
         self.entries_failed = false;
-        self.request_pages();
+        self.request_pages(storage);
     }
 
-    fn request_pages(&mut self) {
-        if self.ready
+    pub(super) fn request_pages(&mut self, storage: &Storage) {
+        if storage.ready
             && let Some(id) = self.active
             && let Some(request) = self.selection.position_request()
-            && self.worker.positions(
+            && storage.worker.positions(
                 request.generation,
                 crate::collections::SelectionOrigin::Collection(id),
                 self.order,
@@ -520,12 +501,12 @@ impl Collections {
         {
             self.selection.position_sent();
         }
-        if self.ready && self.groups.is_none() && !self.groups_pending && !self.groups_failed {
-            self.groups_pending = self
+        if storage.ready && self.groups.is_none() && !self.groups_pending && !self.groups_failed {
+            self.groups_pending = storage
                 .worker
                 .groups(self.groups_generation, self.groups_offset);
         }
-        if self.ready
+        if storage.ready
             && self
                 .entries
                 .as_ref()
@@ -534,7 +515,7 @@ impl Collections {
             && !self.entries_failed
             && let Some(id) = self.active
         {
-            self.entries_pending = self.worker.entries_ordered(
+            self.entries_pending = storage.worker.entries_ordered(
                 self.entries_generation,
                 id,
                 self.order,
@@ -544,77 +525,43 @@ impl Collections {
     }
 
     fn saving(&self) -> bool {
-        self.save.as_ref().is_some_and(|save| save.error.is_none())
+        self.save
+            .as_ref()
+            .is_some_and(|save| save.request.error.is_none())
     }
-    fn can_edit(&self) -> bool {
-        self.ready && self.save.is_none()
+    fn can_edit(&self, storage: &Storage) -> bool {
+        storage.ready && self.save.is_none()
     }
 
-    fn mutate(&mut self, mutation: Mutation) {
+    fn mutate(&mut self, storage: &mut Storage, mutation: Mutation) {
         if self.saving() {
             return;
         }
-        self.operation += 1;
         let removed_source = match &mutation {
             Mutation::Remove { entry, collection } if self.active == Some(*collection) => {
                 self.entries.as_ref().and_then(|page| page.rows.iter().find(|row| row.id == *entry))
                     .map(|row| row.reference.source.clone())
-                    .or_else(|| self.save.as_ref().filter(|save| matches!(&save.mutation, Mutation::Remove {entry: old_entry, collection: old_collection} if old_entry == entry && old_collection == collection)).and_then(|save| save.removed_source.clone()))
+                    .or_else(|| self.save.as_ref().filter(|save| matches!(&save.request.mutation, Mutation::Remove {entry: old_entry, collection: old_collection} if old_entry == entry && old_collection == collection)).and_then(|save| save.removed_source.clone()))
             }
             _ => None,
         };
-        let error = self.worker.mutate(self.operation, mutation.clone()).err();
-        self.save = Some(PendingSave {
-            operation: self.operation,
-            mutation,
-            error,
+        self.save = Some(CollectionSave {
+            request: storage.submit(mutation),
             removed_source,
         });
     }
 
-    pub(super) fn track_favorites(&mut self, mut paths: BTreeSet<PathBuf>) {
-        self.favorite_paths_dirty = false;
-        if let Some(page) = &self.entries {
-            paths.extend(page.rows.iter().map(|entry| entry.reference.source.clone()));
-        }
-        self.favorites.track(paths);
-        self.favorites.request(&self.worker, self.ready);
-    }
-
-    pub(super) fn toggle_favorite(&mut self, reference: &Reference) {
-        if self.ready {
-            self.favorites
-                .toggle(&self.worker, &mut self.operation, reference);
-        }
-    }
-
-    pub(super) fn favorite_feedback(&mut self, ui: &mut egui::Ui) {
-        self.favorites
-            .feedback(ui, &self.worker, &mut self.operation);
-    }
-
-    pub(super) fn favorite_list(
-        &mut self,
-        ui: &mut egui::Ui,
-        selected: Option<crate::collections::favorites::FavoriteId>,
-        active_reference: Option<&Reference>,
-    ) -> Option<super::favorites::Action> {
-        self.favorites.list(
-            ui,
-            &self.worker,
-            &mut self.operation,
-            self.ready,
-            selected,
-            active_reference,
-        )
+    pub(super) fn visible_sources(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        self.entries
+            .iter()
+            .flat_map(|page| page.rows.iter().map(|entry| entry.reference.source.clone()))
     }
 
     pub(super) fn sound_has_focus(&self, context: &egui::Context) -> bool {
-        self.selection.has_focus(context) || self.favorites.has_focus(context)
+        self.selection.has_focus(context)
     }
 
     pub(super) fn sources_changed(&mut self, paths: &[PathBuf]) {
-        self.favorites.sources_changed(paths);
         if self.entries.as_ref().is_some_and(|page| {
             page.rows.iter().any(|entry| {
                 paths
@@ -637,13 +584,15 @@ impl Collections {
     pub(super) fn ui(
         &mut self,
         ui: &mut egui::Ui,
+        storage: &mut Storage,
+        favorites: &mut Favorites,
         selected: Option<&Reference>,
         selected_entry: Option<EntryId>,
         marked_count: usize,
     ) -> Option<Action> {
         let mut action = None;
-        self.request_pages();
-        let can_edit = self.can_edit();
+        self.request_pages(storage);
+        let can_edit = self.can_edit(storage);
         ui.horizontal(|ui| {
             ui.heading("Collections");
             if ui
@@ -727,7 +676,7 @@ impl Collections {
                 self.refresh_groups();
             }
         } else {
-            ui.label(if self.ready {
+            ui.label(if storage.ready {
                 "Loading collections..."
             } else {
                 "Opening collections..."
@@ -740,7 +689,7 @@ impl Collections {
             self.dialog = Some(dialog);
         }
         if let Some(mutation) = add {
-            self.mutate(mutation);
+            self.mutate(storage, mutation);
         }
         ui.add_space(10.0);
         ui.separator();
@@ -755,7 +704,7 @@ impl Collections {
             && let Some(collection) = self.active
             && let Some(mutation) = dropped_sounds(&response, collection)
         {
-            self.mutate(mutation);
+            self.mutate(storage, mutation);
         }
         if self.active.is_some() {
             let mut order = self.order;
@@ -802,7 +751,7 @@ impl Collections {
                 }
             });
             if order != self.order {
-                self.reorder(order);
+                self.reorder(storage, order);
                 selection::focus(ui, ui.make_persistent_id("collection-sound-focus"));
                 return None;
             }
@@ -851,7 +800,7 @@ impl Collections {
                     )
                     .clicked()
                 {
-                    self.remove_selected(collection);
+                    self.remove_selected(storage, collection);
                 }
                 if ui
                     .button("Refresh")
@@ -899,12 +848,12 @@ impl Collections {
                                 Availability::Unavailable(_) => "Unavailable · ",
                             };
                             ui.horizontal(|ui| {
-                                let membership = self.favorites.status(&entry.reference.source);
+                                let membership = favorites.status(&entry.reference.source);
                                 if star_button(
                                     ui,
                                     membership,
-                                    self.ready
-                                        && self.favorites.can_edit()
+                                    storage.ready
+                                        && favorites.can_edit()
                                         && (membership == Some(true)
                                             || entry.availability.usable()),
                                     &entry.reference.name,
@@ -994,7 +943,7 @@ impl Collections {
                     .remember_scroll(scroll.state.offset.y, scroll.inner);
                 let total = page.total;
                 if let Some(offset) = pager(ui, self.entries_offset, total) {
-                    self.load_entry_page(offset);
+                    self.load_entry_page(storage, offset);
                 }
                 ui.label(
                     RichText::new(format!("{total} saved sounds"))
@@ -1006,9 +955,9 @@ impl Collections {
             }
             if let Some((entry, marked)) = remove {
                 if marked {
-                    self.remove_selected(collection);
+                    self.remove_selected(storage, collection);
                 } else {
-                    self.mutate(Mutation::Remove { collection, entry });
+                    self.mutate(storage, Mutation::Remove { collection, entry });
                 }
             }
         } else {
@@ -1031,7 +980,7 @@ impl Collections {
         if let Some((index, _)) = target
             && index / PAGE_SIZE * PAGE_SIZE != self.entries_offset
         {
-            self.load_entry_page(index / PAGE_SIZE * PAGE_SIZE);
+            self.load_entry_page(storage, index / PAGE_SIZE * PAGE_SIZE);
         }
         if favorite_key && let Some(SoundKey::Collection(id)) = self.selection.active() {
             favorite = selected
@@ -1055,7 +1004,7 @@ impl Collections {
         }
         if let Some(request) = self.selection.request()
             && let Some(collection) = self.active
-            && self.worker.entry_selection_ordered(
+            && storage.worker.entry_selection_ordered(
                 request.generation,
                 collection,
                 self.order,
@@ -1066,7 +1015,7 @@ impl Collections {
             self.selection.sent();
         }
         if let Some(reference) = favorite {
-            self.toggle_favorite(&reference);
+            favorites.toggle(storage, &reference);
         }
         if let Some(error) = &self.error {
             ui.colored_label(Color32::from_rgb(245, 143, 140), error);
@@ -1083,9 +1032,10 @@ impl Collections {
             ui.label(RichText::new("Saving...").small().weak());
         }
         let failed = self.save.as_ref().and_then(|save| {
-            save.error
+            save.request
+                .error
                 .as_ref()
-                .map(|error| (error.clone(), save.mutation.clone()))
+                .map(|error| (error.clone(), save.request.mutation.clone()))
         });
         if let Some((error, mutation)) = failed {
             ui.colored_label(
@@ -1094,18 +1044,18 @@ impl Collections {
             );
             ui.horizontal(|ui| {
                 if ui.button("Retry save").clicked() {
-                    self.mutate(mutation);
+                    self.mutate(storage, mutation);
                 }
                 if ui.button("Discard unsaved change").clicked() {
                     self.save = None;
                 }
             });
         }
-        self.dialog(ui.ctx());
+        self.dialog(ui.ctx(), storage);
         action
     }
 
-    fn dialog(&mut self, ctx: &egui::Context) {
+    fn dialog(&mut self, ctx: &egui::Context, storage: &mut Storage) {
         let saving = self.saving();
         let mut submit = None;
         let mut close = false;
@@ -1187,7 +1137,7 @@ impl Collections {
             self.dialog = None;
         }
         if let Some(mutation) = submit {
-            self.mutate(mutation);
+            self.mutate(storage, mutation);
         }
     }
 }

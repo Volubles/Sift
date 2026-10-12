@@ -11,6 +11,7 @@ use crate::collections::{
 use crate::search::{PAGE_SIZE, SearchQuery};
 
 use super::pages::Pages;
+use super::saved::{PendingSave, Storage};
 use super::sound_table::{reference_row, table_heading};
 use super::{
     SoundKey,
@@ -36,12 +37,6 @@ pub(super) struct Favorites {
     status_failed: bool,
     error: Option<String>,
     save: Option<PendingSave>,
-}
-
-struct PendingSave {
-    operation: u64,
-    mutation: Mutation,
-    error: Option<String>,
 }
 
 pub(super) enum Action {
@@ -258,8 +253,8 @@ impl Favorites {
         (!self.active || !self.pages.is_empty()) && !self.status_needed && self.save.is_none()
     }
 
-    pub(super) fn toggle(&mut self, worker: &Worker, operation: &mut u64, reference: &Reference) {
-        if !self.can_edit() {
+    pub(super) fn toggle(&mut self, storage: &mut Storage, reference: &Reference) {
+        if !storage.ready || !self.can_edit() {
             return;
         }
         let mutation = match self.status(&reference.source) {
@@ -267,17 +262,11 @@ impl Favorites {
             Some(false) => Mutation::Favorite(reference.clone()),
             None => Mutation::ToggleFavorite(reference.clone()),
         };
-        self.mutate(worker, operation, mutation);
+        self.mutate(storage, mutation);
     }
 
-    fn mutate(&mut self, worker: &Worker, operation: &mut u64, mutation: Mutation) {
-        *operation += 1;
-        let error = worker.mutate(*operation, mutation.clone()).err();
-        self.save = Some(PendingSave {
-            operation: *operation,
-            mutation,
-            error,
-        });
+    fn mutate(&mut self, storage: &mut Storage, mutation: Mutation) {
+        self.save = Some(storage.submit(mutation));
     }
 
     pub(super) fn owns_save(&self, operation: u64) -> bool {
@@ -337,7 +326,7 @@ impl Favorites {
         }
     }
 
-    pub(super) fn feedback(&mut self, ui: &mut egui::Ui, worker: &Worker, operation: &mut u64) {
+    pub(super) fn feedback(&mut self, ui: &mut egui::Ui, storage: &mut Storage) {
         if let Some(error) = &self.error {
             ui.colored_label(Color32::from_rgb(245, 143, 140), error);
             if ui.button("Retry favorites").clicked() {
@@ -358,7 +347,7 @@ impl Favorites {
             );
             ui.horizontal(|ui| {
                 if ui.button("Retry favorite save").clicked() {
-                    self.mutate(worker, operation, mutation);
+                    self.mutate(storage, mutation);
                 }
                 if ui.button("Discard unsaved favorite change").clicked() {
                     self.save = None;
@@ -372,19 +361,17 @@ impl Favorites {
     pub(super) fn list(
         &mut self,
         ui: &mut egui::Ui,
-        worker: &Worker,
-        operation: &mut u64,
-        ready: bool,
+        storage: &mut Storage,
         selected: Option<FavoriteId>,
         active_reference: Option<&Reference>,
     ) -> Option<Action> {
         ui.heading("Favorites");
         ui.separator();
-        if !ready {
+        if !storage.ready {
             ui.label("Opening saved sounds...");
             return None;
         }
-        self.request(worker, ready);
+        self.request(&storage.worker, storage.ready);
         if self.total == 0 {
             ui.label(if self.pages.has_pending() {
                 "Loading favorites..."
@@ -412,7 +399,7 @@ impl Favorites {
         self.selection.feedback(ui, self.total);
         if table_heading(ui, &mut self.order) {
             self.reorder();
-            self.request(worker, ready);
+            self.request(&storage.worker, storage.ready);
             selection::focus(ui, focus_id);
             return None;
         }
@@ -537,16 +524,16 @@ impl Favorites {
                 });
         }
         if let Some(source) = remove {
-            self.mutate(worker, operation, Mutation::Unfavorite(source));
+            self.mutate(storage, Mutation::Unfavorite(source));
         }
         for offset in needed {
-            self.request_page(worker, offset);
+            self.request_page(&storage.worker, offset);
         }
         if let Some((index, _)) = target {
-            self.request_page(worker, index / PAGE_SIZE * PAGE_SIZE);
+            self.request_page(&storage.worker, index / PAGE_SIZE * PAGE_SIZE);
         }
         if let Some(request) = self.selection.request()
-            && worker.favorite_selection_ordered(
+            && storage.worker.favorite_selection_ordered(
                 request.generation,
                 self.query.clone(),
                 self.order,

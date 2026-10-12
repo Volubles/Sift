@@ -22,7 +22,9 @@ use crate::waveform::Waveforms;
 use crate::worker::{Event, Workers};
 
 mod collections;
-use collections::{Action as CollectionAction, Collections};
+use collections::Action as CollectionAction;
+mod saved;
+use saved::SavedSounds;
 mod favorites;
 use favorites::{Action as FavoriteAction, star_button};
 mod libraries;
@@ -102,7 +104,7 @@ pub fn run(options: Options) -> eframe::Result {
                 waveforms,
                 player,
                 drags,
-                Collections::new(collection_worker),
+                SavedSounds::new(collection_worker),
                 options,
                 capture_passed,
             )))
@@ -132,7 +134,7 @@ struct Browser {
     preview: Preview,
     library_view: LibraryView,
     drags: DragWorker,
-    collections: Collections,
+    saved: SavedSounds,
     favorite_paths_dirty: bool,
     libraries: Libraries,
     sidebar: Sidebar,
@@ -165,7 +167,7 @@ impl Browser {
         waveforms: Waveforms,
         player: Player,
         drags: DragWorker,
-        collections: Collections,
+        saved: SavedSounds,
         options: Options,
         capture_passed: Arc<AtomicBool>,
     ) -> Self {
@@ -174,7 +176,7 @@ impl Browser {
             preview: Preview::new(waveforms, player),
             library_view: LibraryView::default(),
             drags,
-            collections,
+            saved,
             libraries: Libraries::default(),
             marked_view: Sidebar::Libraries,
             startup_focus_pending: true,
@@ -224,8 +226,8 @@ impl Browser {
     fn marked_count(&self) -> usize {
         match self.marked_view {
             Sidebar::Libraries => self.library_view.selection.count(self.library_view.total),
-            Sidebar::Collections => self.collections.marked_count(),
-            Sidebar::Favorites => self.collections.favorites.selected_count(),
+            Sidebar::Collections => self.saved.collections.marked_count(),
+            Sidebar::Favorites => self.saved.favorites.selected_count(),
         }
     }
 
@@ -261,7 +263,7 @@ impl Browser {
         }
         self.startup_focus_pending = false;
         if self.sidebar == Sidebar::Collections {
-            self.collections.suspend_view();
+            self.saved.collections.suspend_view(&self.saved.storage);
         }
         if mode == Sidebar::Favorites {
             self.library_view.selection.suspend();
@@ -269,9 +271,7 @@ impl Browser {
                 .invalidate_selection(self.library_view.selection.generation());
         }
         self.sidebar = mode;
-        self.collections
-            .favorites
-            .set_active(mode == Sidebar::Favorites);
+        self.saved.favorites.set_active(mode == Sidebar::Favorites);
         match mode {
             Sidebar::Libraries => {
                 self.marked_view = Sidebar::Libraries;
@@ -280,10 +280,10 @@ impl Browser {
             }
             Sidebar::Favorites => {
                 self.marked_view = Sidebar::Favorites;
-                self.restore_preview(self.collections.favorites.active_reference());
+                self.restore_preview(self.saved.favorites.active_reference());
             }
             Sidebar::Collections => {
-                let saved = self.collections.resume_view();
+                let saved = self.saved.collections.resume_view(&self.saved.storage);
                 self.restore_preview(saved);
             }
         }
@@ -302,8 +302,8 @@ impl Browser {
                     .selection
                     .snapshot(self.library_view.total)?,
             }),
-            Sidebar::Collections => self.collections.selected_references(),
-            Sidebar::Favorites => self.collections.favorites.selected_references(),
+            Sidebar::Collections => self.saved.collections.selected_references(),
+            Sidebar::Favorites => self.saved.favorites.selected_references(),
         }
     }
 
@@ -374,14 +374,14 @@ impl Browser {
         if self.drags.busy() && ctx.input_mut(cancel_file_drag_requested) {
             self.drags.cancel();
         }
-        self.collections.poll();
+        self.saved.poll();
         if self.sidebar == Sidebar::Collections
-            && let Some(saved) = self.collections.take_preview_restore()
+            && let Some(saved) = self.saved.collections.take_preview_restore()
         {
             self.restore_preview(saved);
         }
         if let Some(SoundKey::Collection(id)) = self.preview.key()
-            && let Some(entry) = self.collections.selected_update(id)
+            && let Some(entry) = self.saved.collections.selected_update(id)
         {
             self.preview.update_availability(&entry.availability);
         }
@@ -502,7 +502,7 @@ impl Browser {
                     if report.changed() {
                         self.refresh_query();
                     }
-                    self.collections.sources_changed(
+                    self.saved.sources_changed(
                         &touched
                             .iter()
                             .chain(&full_roots)
@@ -537,7 +537,7 @@ impl Browser {
             }
         }
         self.preview.queue_source_check(&self.workers);
-        if self.favorite_paths_dirty || self.collections.favorite_paths_dirty {
+        if self.favorite_paths_dirty || self.saved.collections.favorite_paths_dirty {
             let mut paths: BTreeSet<_> = self
                 .library_view
                 .pages
@@ -548,7 +548,7 @@ impl Browser {
             if let Some(selected) = self.preview.selected() {
                 paths.insert(selected.source.clone());
             }
-            self.collections.track_favorites(paths);
+            self.saved.track_favorites(paths);
             self.favorite_paths_dirty = false;
         }
         self.preview.poll();
@@ -673,7 +673,7 @@ impl Browser {
         ui.add_space(12.0);
         let favorites = self.sidebar == Sidebar::Favorites;
         let query_text = if favorites {
-            &mut self.collections.favorites.query_text
+            &mut self.saved.favorites.query_text
         } else {
             &mut self.library_view.query_text
         };
@@ -686,14 +686,14 @@ impl Browser {
         }
         if response.changed() {
             if favorites {
-                self.collections.favorites.reset_query();
+                self.saved.favorites.reset_query();
             } else {
                 self.reset_query();
             }
         }
         ui.horizontal(|ui| {
             let total = if favorites {
-                self.collections.favorites.total
+                self.saved.favorites.total
             } else {
                 self.library_view.total
             };
@@ -722,7 +722,7 @@ impl Browser {
         if let Some(message) = &self.library_view.error {
             ui.colored_label(Color32::from_rgb(245, 143, 140), message);
         }
-        self.collections.favorite_feedback(ui);
+        self.saved.favorite_feedback(ui);
         if self.drags.busy() {
             ui.horizontal(|ui| {
                 ui.label(if self.drags.native_active() {
@@ -877,8 +877,8 @@ impl Browser {
                             .horizontal(|ui| {
                                 if star_button(
                                     ui,
-                                    self.collections.favorites.status(&sample.source),
-                                    self.collections.favorites.can_edit(),
+                                    self.saved.favorites.status(&sample.source),
+                                    self.saved.favorites.can_edit(),
                                     &sample.name,
                                 )
                                 .clicked()
@@ -930,7 +930,7 @@ impl Browser {
             .selection
             .remember_scroll(scroll.state.offset.y, scroll.inner);
         if let Some(reference) = favorite {
-            self.collections.toggle_favorite(&reference);
+            self.saved.toggle_favorite(&reference);
         }
         if let Some((sample, index, gesture)) = choice {
             self.marked_view = Sidebar::Libraries;
@@ -956,7 +956,7 @@ impl Browser {
                 })
                 .or_else(|| self.library_view.selection.reference())
         {
-            self.collections.toggle_favorite(reference);
+            self.saved.toggle_favorite(reference);
         }
         if let Some((sample, index)) = drag_sample {
             let key = SoundKey::Library(sample.id);
@@ -999,8 +999,7 @@ impl Browser {
             return;
         };
         if self.ready
-            && self.collections.settled()
-            && self.collections.favorites.settled()
+            && self.saved.settled()
             && (self.sidebar != Sidebar::Libraries || self.libraries.settled())
             && self.scan.is_none()
             && !self.preview.waveform_pending()
@@ -1186,7 +1185,7 @@ impl eframe::App for Browser {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.rendered_frames += 1;
-        self.collections
+        self.saved
             .favorites
             .set_active(self.sidebar == Sidebar::Favorites);
         self.input_events += ui.input(|input| input.events.len()) as u64;
@@ -1195,9 +1194,9 @@ impl eframe::App for Browser {
         // focus. Opening Collections must not substitute its first cached row.
         if self.library_view.selection.has_focus(&ctx) {
             self.marked_view = Sidebar::Libraries;
-        } else if self.collections.favorites.has_focus(&ctx) {
+        } else if self.saved.favorites.has_focus(&ctx) {
             self.marked_view = Sidebar::Favorites;
-        } else if self.collections.sound_has_focus(&ctx) {
+        } else if self.saved.sound_has_focus(&ctx) {
             self.marked_view = Sidebar::Collections;
         }
         if self.drags.busy() && ctx.input_mut(cancel_file_drag_requested) {
@@ -1242,15 +1241,15 @@ impl eframe::App for Browser {
                     ui.separator();
                     ui.label("Starred sounds from all libraries and collections.");
                     ui.label("Select sounds, then drag the group out to copy it or switch to Collections to save references.");
-                    if ui.button("Refresh favorites").clicked() { self.collections.favorites.reset_query(); }
+                    if ui.button("Refresh favorites").clicked() { self.saved.favorites.reset_query(); }
                     return;
                 }
                 let selected_entry = match self.preview.key() {
                     Some(SoundKey::Collection(id)) => Some(id),
                     _ => None,
                 };
-                let action = self.collections.ui(ui, self.preview.selected(), selected_entry, self.marked_count());
-                if let Some(saved) = self.collections.take_preview_restore() { self.restore_preview(saved); }
+                let action = self.saved.ui(ui, self.preview.selected(), selected_entry, self.marked_count());
+                if let Some(saved) = self.saved.collections.take_preview_restore() { self.restore_preview(saved); }
                 if let Some(action) = action {
                     match action {
                         CollectionAction::Select(entry) => {
@@ -1264,7 +1263,7 @@ impl eframe::App for Browser {
                         }
                         CollectionAction::AddMarked(collection) => {
                             let selection = self.marked_selection();
-                            self.collections.add_selected(collection, selection);
+                            self.saved.collections.add_selected(&mut self.saved.storage, collection, selection);
                         }
                     }
                 }
@@ -1287,7 +1286,7 @@ impl eframe::App for Browser {
                     _ => None,
                 };
                 if let Some(action) =
-                    self.collections
+                    self.saved
                         .favorite_list(ui, selected, self.preview.selected())
                 {
                     match action {
@@ -1337,7 +1336,7 @@ impl eframe::App for Browser {
         if !egui::Popup::is_any_open(&ctx)
             && (!ctx.egui_wants_keyboard_input()
                 || self.library_view.selection.has_focus(&ctx)
-                || self.collections.sound_has_focus(&ctx))
+                || self.saved.sound_has_focus(&ctx))
             && (self.sidebar != Sidebar::Libraries || !self.libraries.tree_has_focus(&ctx))
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
         {
