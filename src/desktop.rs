@@ -17,7 +17,7 @@ use crate::collections::{
 };
 use crate::library::ScanReport;
 use crate::platform::{DragError, DragWorker};
-use crate::search::{PAGE_SIZE, SearchQuery};
+use crate::search::PAGE_SIZE;
 use crate::waveform::Waveforms;
 use crate::worker::{Event, Workers};
 
@@ -29,9 +29,8 @@ mod libraries;
 mod preview;
 use preview::Preview;
 mod library_view;
-mod pages;
-use pages::Pages;
 mod navigation;
+mod pages;
 mod selection;
 use library_view::LibraryView;
 mod sound_table;
@@ -140,9 +139,6 @@ struct Browser {
     marked_view: Sidebar,
     startup_focus_pending: bool,
     drag_error: Option<String>,
-    generation: u64,
-    view_generation: u64,
-    pages: Pages<Sample>,
     ready: bool,
     error: Option<String>,
     scan: Option<ScanReport>,
@@ -193,9 +189,6 @@ impl Browser {
             },
             favorite_paths_dirty: true,
             drag_error: None,
-            generation: 0,
-            view_generation: 0,
-            pages: Pages::default(),
             ready: false,
             error: None,
             scan: None,
@@ -221,10 +214,11 @@ impl Browser {
     }
 
     fn reset_query(&mut self) {
-        self.library_view.selection.reset();
-        self.view_generation += 1;
-        self.library_view.total = 0;
-        self.refresh_query();
+        self.favorite_paths_dirty = true;
+        self.error = None;
+        if let Some(offset) = self.library_view.reset_query(&self.workers) {
+            self.request_page(offset);
+        }
     }
 
     fn marked_count(&self) -> usize {
@@ -237,7 +231,6 @@ impl Browser {
 
     fn change_library_location(&mut self) {
         if self.library_view.change(self.libraries.location()) {
-            self.view_generation += 1;
             self.marked_view = Sidebar::Libraries;
             self.restore_library_preview();
         }
@@ -336,65 +329,30 @@ impl Browser {
     }
 
     fn refresh_query(&mut self) {
-        self.library_view.selection.refresh();
-        self.workers
-            .invalidate_selection(self.library_view.selection.generation());
         self.favorite_paths_dirty = true;
-        self.generation += 1;
-        self.pages.clear();
-        match SearchQuery::parse(&self.library_view.query_text) {
-            Ok(query) => {
-                self.library_view.query = query;
-                self.error = None;
-                self.request_page(
-                    self.library_view.selection.first_visible() / PAGE_SIZE * PAGE_SIZE,
-                );
-            }
-            Err(error) => {
-                self.error = Some(error.to_string());
-            }
+        self.error = None;
+        if let Some(offset) = self.library_view.refresh(&self.workers) {
+            self.request_page(offset);
         }
     }
 
     fn reorder_list(&mut self) {
-        self.library_view.selection.reorder();
-        self.workers
-            .invalidate_selection(self.library_view.selection.generation());
-        self.generation += 1;
-        self.pages.clear();
+        self.library_view.reorder(&self.workers);
         self.request_list_positions();
         self.request_page(0);
     }
 
     fn request_list_positions(&mut self) {
-        if self.ready
-            && let Some(request) = self.library_view.selection.position_request()
-            && self.workers.positions(
-                request.generation,
-                self.library_view.query.clone(),
-                self.libraries.scope(),
-                self.library_view.order,
-                request.active,
-                request.anchor,
-            )
-        {
-            self.library_view.selection.position_sent();
+        if self.ready {
+            self.library_view
+                .request_positions(&self.workers, self.libraries.scope());
         }
     }
 
     fn request_page(&mut self, offset: usize) {
-        if self.ready
-            && self.error.is_none()
-            && self.pages.needs(offset)
-            && self.workers.query_ordered(
-                self.generation,
-                self.library_view.query.clone(),
-                self.libraries.scope(),
-                self.library_view.order,
-                offset,
-            )
-        {
-            self.pages.requested(offset);
+        if self.ready && self.error.is_none() {
+            self.library_view
+                .request_page(&self.workers, self.libraries.scope(), offset);
         }
     }
 
@@ -498,37 +456,14 @@ impl Browser {
                 Event::Folders { generation, result } => {
                     self.libraries.folder_page(generation, result)
                 }
-                Event::Page { generation, result } if generation == self.generation => match result
-                {
-                    Ok(page) => {
-                        self.library_view.total = page.total;
+                Event::Page { generation, result } => {
+                    if let Some(rows) = self.library_view.page(generation, result) {
                         if self.sidebar != Sidebar::Favorites {
-                            self.preview.refresh_catalog(&page.rows);
+                            self.preview.refresh_catalog(rows);
                         }
-                        for (position, sample) in page.rows.iter().enumerate() {
-                            self.library_view.selection.observe(
-                                SoundKey::Library(sample.id),
-                                page.offset + position,
-                                &sample.source,
-                            );
-                            if self.library_view.selection.active_source()
-                                == Some(sample.source.as_path())
-                            {
-                                self.library_view
-                                    .selection
-                                    .remember(Reference::from(sample));
-                            }
-                        }
-                        self.pages.insert(page);
                         self.favorite_paths_dirty = true;
                     }
-                    Err(message) => {
-                        self.pages.clear_pending();
-                        eprintln!("Sift search failed: {message}");
-                        self.error = Some(format!("Search failed: {message}"));
-                    }
-                },
-                Event::Page { .. } => {}
+                }
                 Event::Progress(report) => {
                     if report.indexed > 0
                         && self.last_index_refresh.elapsed() >= Duration::from_millis(250)
@@ -604,6 +539,7 @@ impl Browser {
         self.preview.queue_source_check(&self.workers);
         if self.favorite_paths_dirty || self.collections.favorite_paths_dirty {
             let mut paths: BTreeSet<_> = self
+                .library_view
                 .pages
                 .iter()
                 .flat_map(|page| &page.rows)
@@ -783,6 +719,9 @@ impl Browser {
         if let Some(message) = &self.error {
             ui.colored_label(Color32::from_rgb(245, 143, 140), message);
         }
+        if let Some(message) = &self.library_view.error {
+            ui.colored_label(Color32::from_rgb(245, 143, 140), message);
+        }
         self.collections.favorite_feedback(ui);
         if self.drags.busy() {
             ui.horizontal(|ui| {
@@ -855,11 +794,11 @@ impl Browser {
             });
             return;
         }
-        if self.library_view.total == 0 && self.pages.is_empty() {
+        if self.library_view.total == 0 && self.library_view.pages.is_empty() {
             self.request_page(0);
         }
         if self.library_view.total == 0 {
-            if self.pages.has_pending() {
+            if self.library_view.pages.has_pending() {
                 ui.label("Searching...");
             } else if self.library_view.query_text.is_empty() {
                 ui.label(
@@ -885,7 +824,8 @@ impl Browser {
                 .keyboard(ui, focus_id, self.library_view.total);
         let target = self.library_view.selection.target();
         let mut choice = target.and_then(|(index, gesture)| {
-            self.pages
+            self.library_view
+                .pages
                 .iter()
                 .find(|page| index >= page.offset && index < page.offset + page.rows.len())
                 .and_then(|page| page.rows.get(index - page.offset))
@@ -907,7 +847,7 @@ impl Browser {
             .scroll_area(
                 ui,
                 egui::ScrollArea::vertical()
-                    .id_salt(("samples", self.view_generation))
+                    .id_salt(("samples", self.library_view.view_generation))
                     .auto_shrink([false, false]),
                 0,
                 ui.available_height(),
@@ -918,6 +858,7 @@ impl Browser {
                     let offset = index / PAGE_SIZE * PAGE_SIZE;
                     needed.insert(offset);
                     if let Some(sample) = self
+                        .library_view
                         .pages
                         .iter()
                         .find(|page| page.offset == offset)
@@ -1063,7 +1004,7 @@ impl Browser {
             && (self.sidebar != Sidebar::Libraries || self.libraries.settled())
             && self.scan.is_none()
             && !self.preview.waveform_pending()
-            && !self.pages.is_empty()
+            && !self.library_view.pages.is_empty()
             && !self.screenshot_requested
         {
             self.screenshot_requested = true;
@@ -1101,7 +1042,11 @@ impl Browser {
                     eprintln!(
                         "Sift native window smoke capture complete; {} results, {} cached records",
                         self.library_view.total,
-                        self.pages.iter().map(|page| page.rows.len()).sum::<usize>()
+                        self.library_view
+                            .pages
+                            .iter()
+                            .map(|page| page.rows.len())
+                            .sum::<usize>()
                     );
                 }
                 Ok(Err(error)) => eprintln!("Sift smoke capture failed: {error}"),

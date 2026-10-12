@@ -11,7 +11,7 @@ All core workflows run locally without accounts or network services.
 | `desktop` | Window layout, navigation, catalog events, and selection between views |
 | `desktop::preview` | Selected-source state, source validation generations, waveform results, playback controls, and details |
 | `desktop::selection` | View-local source marks, range generations, keyboard focus, and pending navigation |
-| `desktop::library_view` | Current library/folder query, selection, and remembered sound-table views |
+| `desktop::library_view` | Library/folder query, selection, ordering, page lifecycle, errors, and remembered sound-table views |
 | `desktop::navigation` | Bounded inactive view caches shared by the library, tree, and collection owners |
 | `desktop::libraries` | Library registrations, folder scopes, breadcrumbs, and tree navigation |
 | `desktop::collections` / `favorites` | Saved-reference views and pending edits |
@@ -96,6 +96,9 @@ Catalog event/read/index-command queues hold 8/4/4 messages. Search results have
 selected-source generations prevent old replies from replacing newer state.
 
 Selection is separate from preview. Each sound view owns its marks and focus.
+Library queries, result generations, pending reads and page errors stay with
+`LibraryView`. Libraries and Favorites share the bounded page-cache rule;
+their selection and query lifecycles remain with the respective view owners.
 Ctrl+A is a compact view-wide intent; explicit ranges use native path endpoints
 and resolve on existing workers in one SQL snapshot. Replies and mark sets have
 path-count/byte bounds. Generations reject obsolete ranges, while marking and

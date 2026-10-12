@@ -1,9 +1,15 @@
 use super::{
     libraries::Location,
     navigation::{RetainedState, Views},
+    pages::Pages,
     selection::Selection,
 };
-use crate::search::SearchQuery;
+use crate::{
+    catalog::{Sample, Scope, SearchPage},
+    collections::Reference,
+    search::{PAGE_SIZE, SearchQuery},
+    worker::Workers,
+};
 
 #[derive(Default)]
 pub(super) struct LibraryView {
@@ -12,6 +18,10 @@ pub(super) struct LibraryView {
     pub query: SearchQuery,
     pub total: usize,
     pub order: crate::search::SortOrder,
+    pub pages: Pages<Sample>,
+    pub view_generation: u64,
+    pub error: Option<String>,
+    pub(super) generation: u64,
     location: Location,
     saved: Views<Location, SavedView>,
 }
@@ -30,6 +40,105 @@ impl RetainedState for SavedView {
 }
 
 impl LibraryView {
+    pub(super) fn reset_query(&mut self, workers: &Workers) -> Option<usize> {
+        self.selection.reset();
+        self.view_generation += 1;
+        self.total = 0;
+        self.refresh(workers)
+    }
+
+    pub(super) fn refresh(&mut self, workers: &Workers) -> Option<usize> {
+        self.selection.refresh();
+        workers.invalidate_selection(self.selection.generation());
+        self.generation += 1;
+        self.pages.clear();
+        match SearchQuery::parse(&self.query_text) {
+            Ok(query) => {
+                self.query = query;
+                self.error = None;
+                Some(self.selection.first_visible() / PAGE_SIZE * PAGE_SIZE)
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+                None
+            }
+        }
+    }
+
+    pub(super) fn reorder(&mut self, workers: &Workers) {
+        self.selection.reorder();
+        workers.invalidate_selection(self.selection.generation());
+        self.generation += 1;
+        self.pages.clear();
+    }
+
+    pub(super) fn request_positions(&mut self, workers: &Workers, scope: Scope) {
+        if let Some(request) = self.selection.position_request()
+            && workers.positions(
+                request.generation,
+                self.query.clone(),
+                scope,
+                self.order,
+                request.active,
+                request.anchor,
+            )
+        {
+            self.selection.position_sent();
+        }
+    }
+
+    pub(super) fn request_page(&mut self, workers: &Workers, scope: Scope, offset: usize) {
+        if self.error.is_none()
+            && self.pages.needs(offset)
+            && workers.query_ordered(
+                self.generation,
+                self.query.clone(),
+                scope,
+                self.order,
+                offset,
+            )
+        {
+            self.pages.requested(offset);
+        }
+    }
+
+    pub(super) fn page(
+        &mut self,
+        generation: u64,
+        result: Result<SearchPage, String>,
+    ) -> Option<&[Sample]> {
+        if generation != self.generation {
+            return None;
+        }
+        match result {
+            Ok(page) => {
+                self.total = page.total;
+                for (position, sample) in page.rows.iter().enumerate() {
+                    self.selection.observe(
+                        super::SoundKey::Library(sample.id),
+                        page.offset + position,
+                        &sample.source,
+                    );
+                    if self.selection.active_source() == Some(sample.source.as_path()) {
+                        self.selection.remember(Reference::from(sample));
+                    }
+                }
+                let offset = page.offset;
+                self.pages.insert(page);
+                self.pages
+                    .iter()
+                    .find(|page| page.offset == offset)
+                    .map(|page| page.rows.as_slice())
+            }
+            Err(message) => {
+                self.pages.clear_pending();
+                eprintln!("Sift search failed: {message}");
+                self.error = Some(format!("Search failed: {message}"));
+                None
+            }
+        }
+    }
+
     pub(super) fn change(&mut self, location: Location) -> bool {
         if self.location == location {
             return false;
@@ -71,6 +180,7 @@ impl LibraryView {
         self.query_text = restored.query_text;
         self.total = restored.total;
         self.order = restored.order;
+        self.view_generation += 1;
         true
     }
 
