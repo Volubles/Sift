@@ -4,7 +4,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, RichText};
@@ -21,6 +20,8 @@ use crate::search::PAGE_SIZE;
 use crate::waveform::Waveforms;
 use crate::worker::{Event, Workers};
 
+mod diagnostics;
+use diagnostics::{CaptureStatus, Diagnostics};
 mod collections;
 use collections::Action as CollectionAction;
 mod saved;
@@ -151,14 +152,7 @@ struct Browser {
     automatic_scan: bool,
     last_index_refresh: Instant,
     folder: Option<PathBuf>,
-    smoke: Option<PathBuf>,
-    smoke_subfolder: Option<PathBuf>,
-    screenshot_requested: bool,
-    capture_writer: Option<JoinHandle<std::io::Result<()>>>,
-    capture_passed: Arc<AtomicBool>,
-    started: Instant,
-    rendered_frames: u64,
-    input_events: u64,
+    diagnostics: Diagnostics,
 }
 
 impl Browser {
@@ -171,6 +165,7 @@ impl Browser {
         options: Options,
         capture_passed: Arc<AtomicBool>,
     ) -> Self {
+        let diagnostics = Diagnostics::new(options.smoke_screenshot, capture_passed);
         Self {
             workers,
             preview: Preview::new(waveforms, player),
@@ -180,15 +175,7 @@ impl Browser {
             libraries: Libraries::default(),
             marked_view: Sidebar::Libraries,
             startup_focus_pending: true,
-            sidebar: if options.smoke_screenshot.is_some() {
-                match std::env::var("SIFT_SMOKE_VIEW").as_deref() {
-                    Ok("favorites") => Sidebar::Favorites,
-                    Ok("collections") => Sidebar::Collections,
-                    _ => Sidebar::default(),
-                }
-            } else {
-                Sidebar::default()
-            },
+            sidebar: diagnostics.sidebar(),
             favorite_paths_dirty: true,
             drag_error: None,
             ready: false,
@@ -201,17 +188,7 @@ impl Browser {
             automatic_scan: false,
             last_index_refresh: Instant::now(),
             folder: options.folder,
-            smoke_subfolder: options
-                .smoke_screenshot
-                .as_ref()
-                .and_then(|_| std::env::var_os("SIFT_SMOKE_SUBFOLDER").map(PathBuf::from)),
-            smoke: options.smoke_screenshot,
-            screenshot_requested: false,
-            capture_writer: None,
-            capture_passed,
-            started: Instant::now(),
-            rendered_frames: 0,
-            input_events: 0,
+            diagnostics,
         }
     }
 
@@ -429,7 +406,7 @@ impl Browser {
                 }
                 Event::Libraries(result) => {
                     let changed = self.libraries.snapshot(result);
-                    let scoped = if let Some(relative) = self.smoke_subfolder.take() {
+                    let scoped = if let Some(relative) = self.diagnostics.take_subfolder() {
                         if self.libraries.select_smoke_subfolder(relative) {
                             true
                         } else {
@@ -994,70 +971,30 @@ impl Browser {
         }
     }
 
-    fn smoke_check(&mut self, ctx: &egui::Context) {
-        let Some(path) = self.smoke.clone() else {
+    fn smoke_check(&mut self, context: &egui::Context) {
+        if !self.diagnostics.capturing() {
             return;
-        };
-        if self.ready
+        }
+        let ready = self.ready
             && self.saved.settled()
             && (self.sidebar != Sidebar::Libraries || self.libraries.settled())
             && self.scan.is_none()
             && !self.preview.waveform_pending()
-            && !self.library_view.pages.is_empty()
-            && !self.screenshot_requested
-        {
-            self.screenshot_requested = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
-        }
-        let image = ctx.input(|input| {
-            input.events.iter().find_map(|event| match event {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
-        if let Some(image) = image {
-            match std::thread::Builder::new()
-                .name("sift-smoke-capture".into())
-                .spawn(move || save_capture(path, &image))
-            {
-                Ok(writer) => {
-                    self.capture_writer = Some(writer);
-                }
-                Err(error) => {
-                    eprintln!("Sift capture worker failed: {error}");
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
-        }
-        if self
-            .capture_writer
-            .as_ref()
-            .is_some_and(|writer| writer.is_finished())
-            && let Some(writer) = self.capture_writer.take()
-        {
-            match writer.join() {
-                Ok(Ok(())) => {
-                    self.capture_passed.store(true, Ordering::Release);
-                    eprintln!(
-                        "Sift native window smoke capture complete; {} results, {} cached records",
-                        self.library_view.total,
-                        self.library_view
-                            .pages
-                            .iter()
-                            .map(|page| page.rows.len())
-                            .sum::<usize>()
-                    );
-                }
-                Ok(Err(error)) => eprintln!("Sift smoke capture failed: {error}"),
-                Err(_) => eprintln!("Sift smoke capture worker panicked"),
-            }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else if self.started.elapsed() > Duration::from_secs(30) {
-            eprintln!("Sift smoke capture timed out: {:?}", self.error);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else {
-            ctx.request_repaint_after(Duration::from_millis(50));
-        }
+            && !self.library_view.pages.is_empty();
+        self.diagnostics.poll_capture(
+            context,
+            CaptureStatus {
+                ready,
+                results: self.library_view.total,
+                cached_records: self
+                    .library_view
+                    .pages
+                    .iter()
+                    .map(|page| page.rows.len())
+                    .sum(),
+                error: self.error.as_deref().or(self.library_view.error.as_deref()),
+            },
+        );
     }
 }
 
@@ -1132,63 +1069,19 @@ fn navigation_button(ui: &mut egui::Ui, mode: Sidebar, selected: bool) -> egui::
     response
 }
 
-fn save_capture(path: PathBuf, image: &egui::ColorImage) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut bytes = format!("P6\n{} {}\n255\n", image.width(), image.height()).into_bytes();
-    bytes.reserve(image.width() * image.height() * 3);
-    for pixel in &image.pixels {
-        let rgba = pixel.to_array();
-        bytes.extend_from_slice(&rgba[..3]);
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(&bytes)
-}
-
-impl Drop for Browser {
-    fn drop(&mut self) {
-        if let Some(writer) = self.capture_writer.take() {
-            match writer.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => eprintln!("Sift capture failed during shutdown: {error}"),
-                Err(_) => eprintln!("Sift capture worker panicked during shutdown"),
-            }
-        }
-    }
-}
-
 impl eframe::App for Browser {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Some(path) = std::env::var_os("SIFT_FRAME_REPORT") {
-            let report = format!(
-                "frames={} input_events={} phase={}\n",
-                self.rendered_frames,
-                self.input_events,
-                self.preview.playback_phase()
-            );
-            use std::io::Write;
-            let result = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-                .and_then(|mut file| file.write_all(report.as_bytes()));
-            if let Err(error) = result {
-                eprintln!("Frame diagnostic failed: {error}");
-            }
-        }
+        self.diagnostics.finish(self.preview.playback_phase());
     }
     fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
         self.accept_events(context);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.rendered_frames += 1;
+        self.diagnostics.frame(ui.ctx());
         self.saved
             .favorites
             .set_active(self.sidebar == Sidebar::Favorites);
-        self.input_events += ui.input(|input| input.events.len()) as u64;
         let ctx = ui.ctx().clone();
         // Keep the most recently used sound list when a sidebar/button takes
         // focus. Opening Collections must not substitute its first cached row.

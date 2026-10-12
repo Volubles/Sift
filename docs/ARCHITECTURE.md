@@ -16,6 +16,7 @@ All core workflows run locally without accounts or network services.
 | `desktop::libraries` | Library registrations, folder scopes, breadcrumbs, and tree navigation |
 | `desktop::collections` / `favorites` | Saved-reference views and pending edits |
 | `desktop::saved` | Shared saved-storage worker, operation IDs, and reply routing between the two independent views |
+| `desktop::diagnostics` | Optional native capture, frame counters, and joined background report writers |
 | `library` | Source enumeration, metadata probing, revisions, and synchronization |
 | `catalog` / `search` | Searchable metadata, folder queries, and query semantics |
 | `libraries` / `collections` | Durable library registrations and saved references |
@@ -174,6 +175,11 @@ the transactional migration. See [Sound ordering](SORTING.md).
 the Windows folder picker. SQLite is bundled through rusqlite 0.40.2.
 Symphonia 0.6.1, CPAL 0.18.2, Rubato 5.0.1, and rtrb 0.3.3 supply audio support.
 The native adapters use windows-rs 0.62.2 and windows-file-watcher 0.2.2.
+
+Native screenshot and frame-report diagnostics have their own optional lifecycle.
+They create output files on bounded background writers and refuse replacement;
+shutdown joins those writers. Ordinary sessions do not count frames or create a
+diagnostic writer unless a report/capture was requested.
 
 Default features enable the desktop, playback, and native dragging.
 `--no-default-features` provides the CLI-only configuration. WGPU is optional
