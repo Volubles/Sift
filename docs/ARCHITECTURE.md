@@ -71,7 +71,8 @@ Captured library queries pair literal text with validated metadata criteria.
 Pages, ranges, cursor lookup and group resolution compile those criteria through
 the same parameterized predicate owner. No audio probing or schema change is
 needed to filter indexed metadata. The desktop stores applied criteria with
-the library view; popup drafts are transient. See [Filters](FILTERS.md).
+the library view; incomplete popup input is transient and valid changes submit
+the existing background query. See [Filters](FILTERS.md).
 
 The same query owner retains one page anchor with its actual SQL first/last
 sort keys, at most 2 KiB of key data per endpoint. Matching criteria, revision,

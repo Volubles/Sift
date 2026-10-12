@@ -66,6 +66,9 @@ impl Draft {
         let length = match self.length {
             LengthMode::Any => Length::Any,
             LengthMode::Unknown => Length::Unknown,
+            LengthMode::Range if self.min.trim().is_empty() && self.max.trim().is_empty() => {
+                Length::Any
+            }
             LengthMode::Range => Length::Range {
                 min: number(&self.min)?,
                 max: number(&self.max)?,
@@ -106,6 +109,7 @@ impl Editor {
             self.draft = current.into();
         }
         let mut changed = None;
+        let mut close_submenu = None;
         egui::Popup::menu(&response)
             .width(340.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -114,21 +118,29 @@ impl Editor {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("Length");
-                    egui::ComboBox::from_id_salt("filter-length")
-                        .selected_text(match self.draft.length {
+                    // Submenus share the panel's root; ComboBox would replace it.
+                    close_submenu = choice_menu(
+                        ui,
+                        match self.draft.length {
                             LengthMode::Any => "Any",
                             LengthMode::Range => "Range",
                             LengthMode::Unknown => "Unknown",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.draft.length, LengthMode::Any, "Any");
-                            ui.selectable_value(&mut self.draft.length, LengthMode::Range, "Range");
-                            ui.selectable_value(
-                                &mut self.draft.length,
-                                LengthMode::Unknown,
-                                "Unknown",
-                            );
-                        });
+                        },
+                        |ui| {
+                            let mut chosen = false;
+                            for (mode, label) in [
+                                (LengthMode::Any, "Any"),
+                                (LengthMode::Range, "Range"),
+                                (LengthMode::Unknown, "Unknown"),
+                            ] {
+                                chosen |= ui
+                                    .selectable_value(&mut self.draft.length, mode, label)
+                                    .clicked();
+                            }
+                            chosen
+                        },
+                    )
+                    .or(close_submenu);
                 });
                 if self.draft.length == LengthMode::Range {
                     ui.horizontal(|ui| {
@@ -148,7 +160,13 @@ impl Editor {
                         );
                         ui.label("seconds");
                     });
-                    ui.checkbox(&mut self.draft.include_unknown, "Include unknown lengths");
+                    ui.add_enabled(
+                        !self.draft.min.trim().is_empty() || !self.draft.max.trim().is_empty(),
+                        egui::Checkbox::new(
+                            &mut self.draft.include_unknown,
+                            "Include unknown lengths",
+                        ),
+                    );
                 }
                 ui.separator();
                 ui.label("Format (no selection means any)");
@@ -163,67 +181,90 @@ impl Editor {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("Channels");
-                    egui::ComboBox::from_id_salt("filter-channels")
-                        .selected_text(channel_label(self.draft.channels))
-                        .show_ui(ui, |ui| {
-                            for channels in [
-                                Channels::Any,
-                                Channels::Mono,
-                                Channels::Stereo,
-                                Channels::Unknown,
-                            ] {
-                                ui.selectable_value(
+                    close_submenu = choice_menu(ui, channel_label(self.draft.channels), |ui| {
+                        let mut chosen = false;
+                        for channels in [
+                            Channels::Any,
+                            Channels::Mono,
+                            Channels::Stereo,
+                            Channels::Unknown,
+                        ] {
+                            chosen |= ui
+                                .selectable_value(
                                     &mut self.draft.channels,
                                     channels,
                                     channel_label(channels),
-                                );
-                            }
-                        });
+                                )
+                                .clicked();
+                        }
+                        chosen
+                    })
+                    .or(close_submenu);
                 });
                 ui.horizontal(|ui| {
                     ui.label("Sample rate");
-                    egui::ComboBox::from_id_salt("filter-rate")
-                        .selected_text(rate_label(self.draft.rate))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.draft.rate, SampleRate::Any, "Any");
-                            for hz in [
-                                8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000,
-                                176400, 192000, 384000,
-                            ] {
-                                ui.selectable_value(
-                                    &mut self.draft.rate,
-                                    SampleRate::Hz(hz),
-                                    rate_label(SampleRate::Hz(hz)),
-                                );
-                            }
-                            ui.selectable_value(
-                                &mut self.draft.rate,
-                                SampleRate::Unknown,
-                                "Unknown",
-                            );
-                        });
+                    close_submenu = choice_menu(ui, &rate_label(self.draft.rate), |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(240.0)
+                            .show(ui, |ui| {
+                                let mut chosen = ui
+                                    .selectable_value(&mut self.draft.rate, SampleRate::Any, "Any")
+                                    .clicked();
+                                for hz in [
+                                    8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000,
+                                    176400, 192000, 384000,
+                                ] {
+                                    chosen |= ui
+                                        .selectable_value(
+                                            &mut self.draft.rate,
+                                            SampleRate::Hz(hz),
+                                            rate_label(SampleRate::Hz(hz)),
+                                        )
+                                        .clicked();
+                                }
+                                chosen |= ui
+                                    .selectable_value(
+                                        &mut self.draft.rate,
+                                        SampleRate::Unknown,
+                                        "Unknown",
+                                    )
+                                    .clicked();
+                                chosen
+                            })
+                            .inner
+                    })
+                    .or(close_submenu);
                 });
                 let result = self.draft.filters();
-                if let Err(error) = &result {
-                    ui.colored_label(Color32::from_rgb(245, 143, 140), error);
+                match result {
+                    Ok(filters) if filters != current => changed = Some(filters),
+                    Ok(_) => {}
+                    Err(error) => {
+                        ui.colored_label(Color32::from_rgb(245, 143, 140), error);
+                    }
                 }
                 ui.separator();
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(result.is_ok(), egui::Button::new("Apply filters"))
-                        .clicked()
-                        && let Ok(filters) = result
-                    {
-                        changed = Some(filters);
-                        ui.close();
-                    }
-                    if ui.button("Cancel").clicked() {
-                        ui.close();
-                    }
-                });
+                if ui.button("Close").clicked() {
+                    ui.close();
+                }
             });
+        if let Some(id) = close_submenu {
+            // Keep the submenu registered until the panel has handled its click.
+            egui::containers::menu::MenuState::from_id(ui.ctx(), id, |state| {
+                state.open_item = None
+            });
+        }
         changed
     }
+}
+
+fn choice_menu(
+    ui: &mut egui::Ui,
+    label: &str,
+    choices: impl FnOnce(&mut egui::Ui) -> bool,
+) -> Option<egui::Id> {
+    (ui.menu_button(label, choices).inner == Some(true))
+        .then(|| egui::containers::menu::find_menu_root(ui).id)
 }
 
 fn channel_label(value: Channels) -> &'static str {

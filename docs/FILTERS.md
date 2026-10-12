@@ -12,11 +12,15 @@ and saved collection contents keep their own search and sorting.
 - **Channels:** Any, Mono, Stereo, or Unknown. Any includes multichannel sounds.
 - **Sample rate:** Any, a listed rate in kHz, or Unknown.
 
-**Apply filters** commits the draft. Invalid numbers, negative/nonfinite bounds,
-and reversed ranges cannot be applied. Cancel, Escape or clicking outside the
-popup leaves the applied settings intact. Active filter buttons appear below
-search; click one to remove that criterion or use **Clear filters** to remove
-all metadata filters while retaining the text query.
+Valid changes update results immediately; there is no Apply step. The length,
+channel and sample-rate controls open nested choice menus. Selecting a choice
+closes that menu while retaining the filter panel. Invalid numbers,
+negative/nonfinite bounds and reversed ranges display an error and retain the
+last valid results until corrected. Emptying both length bounds clears that
+criterion. Close, Escape or clicking outside dismisses the panel and retains
+applied filters; reopening restores the valid settings. Active filter buttons
+appear below search; click one to remove that criterion or use **Clear filters**
+to remove all metadata filters while retaining the text query.
 
 Criteria combine with text and the selected library/folder. For example, search
 `impact` and choose Stereo with a maximum length of 3 seconds to find short
