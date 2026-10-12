@@ -1,6 +1,6 @@
 //! Bounded tag reads and accepted edits, owned by one background connection.
 
-use super::{SourceTags, Store, Summary, Tag, TagId};
+use super::{Filter, Membership, Store, Summary, Tag, TagId};
 use crate::collections::{ReferenceSelection, SelectionOrigin};
 use std::path::PathBuf;
 use std::sync::{
@@ -30,7 +30,7 @@ pub enum Event {
     },
     Status {
         generation: u64,
-        result: Result<Vec<SourceTags>, String>,
+        result: Result<Membership, String>,
     },
     Summary {
         generation: u64,
@@ -49,6 +49,7 @@ enum Command {
     Status {
         generation: u64,
         sources: Vec<PathBuf>,
+        filter: Filter,
     },
     Summary {
         generation: u64,
@@ -124,9 +125,18 @@ impl Worker {
                         Command::Status {
                             generation,
                             sources,
+                            filter,
                         } => Event::Status {
                             generation,
-                            result: store.status(&sources).map_err(|e| e.to_string()),
+                            result: store
+                                .status(&sources)
+                                .and_then(|sources| {
+                                    Ok(Membership {
+                                        sources,
+                                        filter_tags: store.definitions(filter.ids())?,
+                                    })
+                                })
+                                .map_err(|e| e.to_string()),
                         },
                         Command::Summary { generation, target } => Event::Summary {
                             generation,
@@ -179,11 +189,12 @@ impl Worker {
             .fetch_max(generation, Ordering::AcqRel);
         self.send(Command::Suggestions { generation, prefix })
     }
-    pub fn status(&self, generation: u64, sources: Vec<PathBuf>) -> bool {
+    pub fn status(&self, generation: u64, sources: Vec<PathBuf>, filter: Filter) -> bool {
         self.reads.status.fetch_max(generation, Ordering::AcqRel);
         self.send(Command::Status {
             generation,
             sources,
+            filter,
         })
     }
     pub fn summary(&self, generation: u64, target: Target) -> bool {

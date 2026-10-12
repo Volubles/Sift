@@ -93,6 +93,10 @@ pub(super) enum Action {
 }
 
 impl Libraries {
+    pub(super) fn browse_all(&mut self) {
+        self.choose_bank(None);
+        self.select_folder(None);
+    }
     pub(super) fn location(&self) -> Location {
         Location {
             library: self.active,

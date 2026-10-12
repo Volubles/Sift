@@ -15,6 +15,7 @@ pub(super) struct SavedSounds {
     pub(super) collections: Collections,
     pub(super) favorites: Favorites,
     pub(super) storage: Storage,
+    pub(super) tags: super::tags::Tags,
 }
 
 pub(super) struct Storage {
@@ -49,15 +50,16 @@ impl Storage {
 }
 
 impl SavedSounds {
-    pub(super) fn new(worker: Worker) -> Self {
+    pub(super) fn new(worker: Worker, tags: crate::tags::worker::Worker) -> Self {
         Self {
             collections: Collections::new(),
             favorites: Favorites::default(),
             storage: Storage::new(worker),
+            tags: super::tags::Tags::new(tags),
         }
     }
 
-    pub(super) fn poll(&mut self) {
+    pub(super) fn poll(&mut self) -> bool {
         self.collections.invalidate_selection(&self.storage);
         while let Some(event) = self.storage.worker.poll() {
             match event {
@@ -92,6 +94,7 @@ impl SavedSounds {
         self.collections.request_pages(&self.storage);
         self.favorites
             .request(&self.storage.worker, self.storage.ready);
+        self.tags.poll()
     }
 
     pub(super) fn settled(&self) -> bool {
@@ -120,8 +123,13 @@ impl SavedSounds {
         selected: Option<crate::collections::favorites::FavoriteId>,
         active_reference: Option<&Reference>,
     ) -> Option<super::favorites::Action> {
-        self.favorites
-            .list(ui, &mut self.storage, selected, active_reference)
+        self.favorites.list(
+            ui,
+            &mut self.storage,
+            selected,
+            active_reference,
+            &mut self.tags,
+        )
     }
 
     pub(super) fn ui(

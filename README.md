@@ -72,6 +72,11 @@ valid changes update results immediately.
 Active filters can be removed individually or cleared; marking and copying
 follow the filtered results. See [metadata filters](docs/FILTERS.md).
 
+Add your own labels in **Tags** below the waveform: type a name and press Enter,
+or choose **Existing**. Mark multiple sounds to add/remove a tag across the group.
+Click a chip or use **Tags** beside library search to filter by labels.
+Tags survive rebuilding the index. See [manual tags](docs/TAGS.md).
+
 ### Preview a sound
 
 Click a sound to load its waveform. Use **Play/Pause**, **Stop**, volume, or

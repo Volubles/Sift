@@ -15,6 +15,7 @@ pub(super) struct QueryPlan {
     pub condition: String,
     pub values: Vec<Value>,
     pub tags: bool,
+    count_condition: Option<String>,
 }
 
 impl QueryPlan {
@@ -42,20 +43,30 @@ impl QueryPlan {
             format!("({condition}) AND ({scope})")
         };
         append_filters(query.filters, &mut condition, &mut values);
+        let mut count_condition = None;
         for (index, id) in query.tags.ids().iter().enumerate() {
             values.push(Value::Integer(id.0));
+            let membership = format!(
+                "EXISTS(SELECT 1 FROM manual_tags.sound_tags st WHERE st.tag_id=?{} AND st.source_path=s.source_path)",
+                values.len()
+            );
             if index == 0 {
-                table = if matches!(table, OrderedTable::SamplesMatchingText) {
-                    OrderedTable::TaggedSamplesMatchingText
+                if matches!(table, OrderedTable::SamplesMatchingText) {
+                    table = OrderedTable::TaggedSamplesMatchingText;
+                    condition = format!("({condition}) AND mt.selected_tag_id=?{}", values.len());
                 } else {
-                    OrderedTable::TaggedSamples
-                };
-                condition = format!("({condition}) AND mt.selected_tag_id=?{}", values.len());
+                    // Count from tag candidates; pages retain the ordered sample index.
+                    count_condition = Some(format!(
+                        "({condition}) AND mt.selected_tag_id=?{}",
+                        values.len()
+                    ));
+                    condition = format!("({condition}) AND {membership}");
+                }
             } else {
-                condition = format!(
-                    "({condition}) AND EXISTS(SELECT 1 FROM manual_tags.sound_tags st WHERE st.tag_id=?{} AND st.source_path=s.source_path)",
-                    values.len()
-                );
+                condition = format!("({condition}) AND {membership}");
+                if let Some(count) = &mut count_condition {
+                    *count = format!("({count}) AND {membership}");
+                }
             }
         }
         Ok(Self {
@@ -63,11 +74,18 @@ impl QueryPlan {
             condition,
             values,
             tags: !query.tags.is_empty(),
+            count_condition,
         })
     }
 
     pub fn from(&self) -> &'static str {
         self.table.sql()
+    }
+    fn count_parts(&self) -> (&'static str, &str) {
+        match &self.count_condition {
+            Some(condition) => (OrderedTable::TaggedSamples.sql(), condition),
+            None => (self.from(), &self.condition),
+        }
     }
 }
 
@@ -150,6 +168,7 @@ impl QueryState {
     /// Read a main-database snapshot before the connection-local revision.
     /// Both external commits and this connection's own writes invalidate counts.
     pub fn get(&mut self, transaction: &Transaction<'_>, plan: &QueryPlan) -> Result<usize> {
+        let (from, condition) = plan.count_parts();
         transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM main.samples LIMIT 1)",
             [],
@@ -177,42 +196,35 @@ impl QueryState {
             && cached.external_revision == external_revision
             && cached.local_changes == local_changes
             && cached.tag_revision == tag_revision
-            && cached.from == plan.from()
-            && cached.condition == plan.condition
+            && cached.from == from
+            && cached.condition == condition
             && cached.values == plan.values
         {
             return Ok(cached.total);
         }
         self.anchor = None;
-        let sql = if plan.condition == "1" {
-            format!("SELECT count(*) FROM {}", plan.from())
+        let sql = if condition == "1" {
+            format!("SELECT count(*) FROM {from}")
         } else {
-            format!(
-                "SELECT count(*) FROM {} WHERE {}",
-                plan.from(),
-                plan.condition
-            )
+            format!("SELECT count(*) FROM {} WHERE {}", from, condition)
         };
         let count: i64 =
             transaction.query_row(&sql, params_from_iter(&plan.values), |row| row.get(0))?;
         let total = usize::try_from(count).map_err(|_| Error::OutOfRange)?;
         // Compare generated predicates and native BLOB bindings, not Path equality:
         // Windows path components can compare equal while locator bytes differ.
-        let bytes = plan
-            .values
-            .iter()
-            .fold(plan.condition.len(), |size, value| {
-                size.saturating_add(match value {
-                    Value::Text(text) => text.len(),
-                    Value::Blob(blob) => blob.len(),
-                    _ => size_of::<Value>(),
-                })
-                .saturating_add(size_of::<Value>())
-            });
+        let bytes = plan.values.iter().fold(condition.len(), |size, value| {
+            size.saturating_add(match value {
+                Value::Text(text) => text.len(),
+                Value::Blob(blob) => blob.len(),
+                _ => size_of::<Value>(),
+            })
+            .saturating_add(size_of::<Value>())
+        });
         self.cached = if bytes <= MAX_COUNT_KEY_BYTES {
             Some(CachedCount {
-                from: plan.from(),
-                condition: plan.condition.clone(),
+                from,
+                condition: condition.to_owned(),
                 values: plan.values.clone(),
                 external_revision,
                 tag_revision,

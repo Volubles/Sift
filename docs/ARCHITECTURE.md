@@ -16,6 +16,7 @@ All core workflows run locally without accounts or network services.
 | `desktop::libraries` | Library registrations, folder scopes, breadcrumbs, and tree navigation |
 | `desktop::collections` / `favorites` | Saved-reference views and pending edits |
 | `desktop::saved` | Shared saved-storage worker, operation IDs, and reply routing between the two independent views |
+| `desktop::tags` | Tag input, pending edits, bounded membership cache, summaries and suggestion generations |
 | `desktop::diagnostics` | Optional native capture, frame counters, and joined background report writers |
 | `library` | Source enumeration, metadata probing, revisions, and synchronization |
 | `catalog` / `search` | Searchable metadata, folder queries, and query semantics |
@@ -56,6 +57,12 @@ catalog connection and owns library registration changes. Search uses an
 independent read-only connection. A separate collection worker owns saved edits
 and favorite reads. Accepted durable changes drain during shutdown even when
 completion events are no longer read by the UI.
+
+An independent tag worker owns manual-label reads and writes. Source membership,
+selection summaries and suggestions have separate generations and bounded queues.
+The saved-view coordinator contains this owner without routing its replies through
+collection/favorite operation IDs. Catalog readers attach tag data read-only only
+for tag-filtered queries; their count memo also observes the tag database revision.
 
 The desktop's saved-storage owner routes replies to Collections or Favorites.
 Each view retains its own selection, pages and submitted edit; one operation

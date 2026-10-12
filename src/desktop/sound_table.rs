@@ -88,6 +88,19 @@ pub(super) fn table_heading(ui: &mut egui::Ui, order: &mut crate::search::SortOr
             }
         }
         x += width;
+        if field == SortField::Filename {
+            let tags = tag_rect(rect);
+            if tags.width() > 0.0 {
+                ui.painter().text(
+                    egui::pos2(tags.left() + 8.0, tags.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "Tags",
+                    egui::FontId::proportional(13.0),
+                    Color32::GRAY,
+                );
+                x += tags.width();
+            }
+        }
     }
     ui.separator();
     changed
@@ -205,7 +218,7 @@ fn sound_row(
 fn paint_columns(ui: &egui::Ui, rect: egui::Rect, values: &[String; 5], color: Color32) {
     let widths = column_widths(rect.width());
     let mut x = rect.left();
-    for (value, width) in values.iter().zip(widths) {
+    for (index, (value, width)) in values.iter().zip(widths).enumerate() {
         let cell =
             egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(width, rect.height()))
                 .intersect(rect);
@@ -219,11 +232,30 @@ fn paint_columns(ui: &egui::Ui, rect: egui::Rect, values: &[String; 5], color: C
                 color,
             );
         x += width;
+        if index == 0 {
+            x += tag_rect(rect).width();
+        }
     }
 }
 
 fn column_widths(width: f32) -> [f32; 5] {
-    [(width - 330.0).max(80.0), 70.0, 80.0, 90.0, 90.0]
+    [
+        (width - 330.0 - tag_width(width)).max(80.0),
+        70.0,
+        80.0,
+        90.0,
+        90.0,
+    ]
+}
+
+fn tag_width(width: f32) -> f32 {
+    if width >= 640.0 { 140.0 } else { 0.0 }
+}
+pub(super) fn tag_rect(rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_size(
+        egui::pos2(rect.left() + column_widths(rect.width())[0], rect.top()),
+        egui::vec2(tag_width(rect.width()), rect.height()),
+    )
 }
 
 pub(super) fn paint_sort_direction(

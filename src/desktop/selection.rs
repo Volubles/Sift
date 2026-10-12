@@ -145,7 +145,7 @@ impl Selection {
     }
 
     pub(super) fn snapshot(&self, total: usize) -> Result<crate::search::SourceSelection, String> {
-        if self.range.is_some() || self.navigation.is_some() {
+        if self.snapshot_pending() {
             return Err("Wait for the selection to finish, then try again".into());
         }
         let count = self.count(total);
@@ -158,6 +158,9 @@ impl Selection {
         } else {
             crate::search::SourceSelection::Only(paths)
         })
+    }
+    pub(super) fn snapshot_pending(&self) -> bool {
+        self.range.is_some() || self.navigation.is_some()
     }
 
     pub(super) fn generation(&self) -> u64 {

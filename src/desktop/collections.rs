@@ -82,6 +82,16 @@ pub(super) enum Action {
 }
 
 impl Collections {
+    pub(super) fn tag_selection_key(&self) -> (u64, u64, bool) {
+        (
+            self.selection.generation(),
+            self.entries_generation,
+            self.previous_marks.as_ref().map_or_else(
+                || self.selection.snapshot_pending(),
+                |marks| marks.sources.is_err(),
+            ),
+        )
+    }
     pub(super) fn active_reference(&self) -> Option<(SoundKey, Reference)> {
         Some((
             self.selection.active()?,

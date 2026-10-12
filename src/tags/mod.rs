@@ -69,6 +69,12 @@ pub struct SourceTags {
     pub source: PathBuf,
     pub tags: Vec<Tag>,
 }
+
+#[derive(Clone, Debug)]
+pub struct Membership {
+    pub sources: Vec<SourceTags>,
+    pub filter_tags: Vec<Tag>,
+}
 #[derive(Clone, Debug)]
 pub struct TagUse {
     pub tag: Tag,
@@ -120,6 +126,22 @@ pub struct Store {
     connection: Connection,
 }
 impl Store {
+    pub fn definitions(&self, ids: &[TagId]) -> Result<Vec<Tag>> {
+        if ids.len() > MAX_FILTER_TAGS || ids.iter().any(|id| id.0 <= 0) {
+            return Err(Error::InvalidTag);
+        }
+        let mut statement = self
+            .connection
+            .prepare("SELECT id,name FROM tags WHERE id=?1")?;
+        let mut tags = Vec::with_capacity(ids.len());
+        for id in ids {
+            let mut rows = statement.query([id.0])?;
+            if let Some(row) = rows.next()? {
+                tags.push(read_tag(row)?);
+            }
+        }
+        Ok(tags)
+    }
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
@@ -200,13 +222,7 @@ impl Store {
             }
         }
         let mut tags: Vec<_> = uses.into_values().collect();
-        tags.sort_by(|a, b| {
-            a.tag
-                .name
-                .to_lowercase()
-                .cmp(&b.tag.name.to_lowercase())
-                .then(a.tag.id.cmp(&b.tag.id))
-        });
+        tags.sort_by_cached_key(|used| (used.tag.name.to_lowercase(), used.tag.id));
         Ok(Summary {
             sources: sources.len(),
             tags,

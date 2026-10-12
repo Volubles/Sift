@@ -45,6 +45,13 @@ pub(super) enum Action {
 }
 
 impl Favorites {
+    pub(super) fn tag_selection_key(&self) -> (u64, u64, bool) {
+        (
+            self.selection.generation(),
+            self.generation,
+            self.selection.snapshot_pending(),
+        )
+    }
     pub(super) fn selected_count(&self) -> usize {
         self.selection.count(self.total)
     }
@@ -364,6 +371,7 @@ impl Favorites {
         storage: &mut Storage,
         selected: Option<FavoriteId>,
         active_reference: Option<&Reference>,
+        tags: &mut super::tags::Tags,
     ) -> Option<Action> {
         ui.heading("Favorites");
         ui.separator();
@@ -444,13 +452,19 @@ impl Favorites {
                                 self.selection.contains(&sound.reference.source, index),
                                 index,
                             );
+                            let tag_clicked = tags.row(
+                                ui,
+                                &sound.reference.source,
+                                super::sound_table::tag_rect(response.rect),
+                                super::tags::Browse::AllLibraries,
+                            );
                             selection::active_outline(
                                 ui,
                                 &response,
                                 self.selection.active_source()
                                     == Some(sound.reference.source.as_path()),
                             );
-                            if response.clicked() {
+                            if response.clicked() && !tag_clicked {
                                 choice = Some((
                                     sound.clone(),
                                     index,

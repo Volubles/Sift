@@ -39,6 +39,11 @@ removed individually or cleared; settings are remembered per library/folder
 during the session. Marking and copying use
 the same filtered view. See [Metadata filters](FILTERS.md).
 
+Manual tags are global source associations, shared by libraries, favorites and
+collections. The editor creates/reuses names and adds/removes one association
+across marked sounds without replacing their other tags. Compact chips and
+library tag filters support finding tagged sounds. See [Tags](TAGS.md).
+
 ## Data preservation
 
 Library registration, collection edits, and favoriting leave source names,
@@ -60,7 +65,7 @@ The core workflow works offline.
 Collection adds and removals accept marked groups of up to 128 sounds, including
 unloaded rows. Internal group dragging saves references; outgoing dragging offers
 up to 128 marked originals to the destination as copies. Collection folders,
-user-controlled item ordering, tags, application-managed export, portable saved
+user-controlled item ordering, application-managed export, portable saved
 selections, and explicit source relinking are not implemented. Similarity search
 is optional future work. Recording, audio editing, cloud synchronization, and
 a timeline are outside the current product scope.

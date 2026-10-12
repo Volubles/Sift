@@ -38,6 +38,8 @@ different stages and cannot substitute for those end-to-end observations.
   100,000-row fixture.
 - [Metadata filter measurements](FILTERS.md#sql-measurement) record combined
   predicates, unknown lengths and page walks on the same fixture.
+- [Manual tag measurements](TAGS.md#sql-measurement) compare tag query paths on
+  the fixed fixture, including the remaining broad-text limitation.
 
 The index fixture used tiny generated WAV files. Unchanged refreshes improved,
 while initial import remained slower than the preceding implementation.

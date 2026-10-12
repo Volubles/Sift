@@ -22,6 +22,7 @@ use crate::worker::{Event, Workers};
 
 mod diagnostics;
 mod filters;
+mod tags;
 use diagnostics::{CaptureStatus, Diagnostics};
 mod collections;
 use collections::Action as CollectionAction;
@@ -101,12 +102,17 @@ pub fn run(options: Options) -> eframe::Result {
                 Some(options.database.clone()),
                 move || collection_context.request_repaint(),
             )?;
+            let tag_context = context.clone();
+            let tag_worker =
+                crate::tags::worker::Worker::start(options.database.clone(), move || {
+                    tag_context.request_repaint()
+                })?;
             Ok(Box::new(Browser::new(
                 workers,
                 waveforms,
                 player,
                 drags,
-                SavedSounds::new(collection_worker),
+                SavedSounds::new(collection_worker, tag_worker),
                 options,
                 capture_passed,
             )))
@@ -212,6 +218,117 @@ impl Browser {
             }
             Err(error) => self.library_view.error = Some(error.to_string()),
         }
+    }
+
+    fn handle_tag_action(&mut self) {
+        let Some(action) = self.saved.tags.take_action() else {
+            return;
+        };
+        let mut filter = self.library_view.query.tags.clone();
+        let mut label = None;
+        match action {
+            tags::Action::Toggle(tag, browse) => {
+                if let Err(error) = filter.set(tag.id, !filter.contains(tag.id)) {
+                    self.error = Some(error.to_string());
+                    return;
+                }
+                if browse == tags::Browse::AllLibraries {
+                    self.switch_sidebar(Sidebar::Libraries);
+                    self.libraries.browse_all();
+                    self.change_library_location();
+                    self.library_view.query_text.clear();
+                    self.library_view.query.filters = Default::default();
+                }
+                label = Some(tag);
+            }
+            tags::Action::RemoveFilter(id) => {
+                if let Err(error) = filter.set(id, false) {
+                    self.error = Some(error.to_string());
+                    return;
+                }
+            }
+            tags::Action::ClearFilters => filter = Default::default(),
+        }
+        self.library_view.query.tags = filter;
+        self.saved.tags.set_filter(&self.library_view.query.tags);
+        if let Some(tag) = label {
+            self.saved.tags.remember_filter_label(&tag);
+        }
+        self.reset_query();
+    }
+
+    fn prepare_tag_target(&mut self) {
+        self.saved.tags.set_filter(&self.library_view.query.tags);
+        let count = self.marked_count();
+        let preview = self.preview.selected();
+        let key = if count == 0 {
+            preview.map_or(tags::TargetKey::None, |sound| {
+                tags::TargetKey::Sound(crate::path_codec::encode(&sound.source))
+            })
+        } else {
+            let (selection_generation, view_generation, pending) = match self.marked_view {
+                Sidebar::Libraries => (
+                    self.library_view.selection.generation(),
+                    self.library_view.generation,
+                    self.library_view.selection.snapshot_pending(),
+                ),
+                Sidebar::Favorites => self.saved.favorites.tag_selection_key(),
+                Sidebar::Collections => self.saved.collections.tag_selection_key(),
+            };
+            tags::TargetKey::Marks {
+                view: self.marked_view,
+                selection_generation,
+                view_generation,
+                pending,
+                count,
+                preview: preview.map(|sound| crate::path_codec::encode(&sound.source)),
+            }
+        };
+        if self.saved.tags.target_key() == &key {
+            return;
+        }
+        let (target, caption, browse) = if count > 0 {
+            let target = if count > crate::search::MAX_ACTION_SOUNDS {
+                Err(format!(
+                    "Choose at most {} sounds for tag edits",
+                    crate::search::MAX_ACTION_SOUNDS
+                ))
+            } else {
+                self.marked_selection()
+                    .map(|selection| Some(crate::tags::worker::Target::Selection(selection)))
+            };
+            (
+                target,
+                format!(
+                    "{count} selected sound{}",
+                    if count == 1 { "" } else { "s" }
+                ),
+                if self.marked_view == Sidebar::Libraries {
+                    tags::Browse::CurrentLibrary
+                } else {
+                    tags::Browse::AllLibraries
+                },
+            )
+        } else if let Some(sound) = preview {
+            (
+                Ok(Some(crate::tags::worker::Target::Sources(vec![
+                    sound.source.clone(),
+                ]))),
+                sound.name.clone(),
+                if matches!(self.preview.key(), Some(SoundKey::Library(_))) {
+                    tags::Browse::CurrentLibrary
+                } else {
+                    tags::Browse::AllLibraries
+                },
+            )
+        } else {
+            (
+                Ok(None),
+                "Select a sound to edit tags".into(),
+                tags::Browse::CurrentLibrary,
+            )
+        };
+        self.saved.tags.set_target(key, target, caption, browse);
     }
 
     fn marked_count(&self) -> usize {
@@ -365,7 +482,9 @@ impl Browser {
         if self.drags.busy() && ctx.input_mut(cancel_file_drag_requested) {
             self.drags.cancel();
         }
-        self.saved.poll();
+        if self.saved.poll() && !self.library_view.query.tags.is_empty() {
+            self.reset_query();
+        }
         if self.sidebar == Sidebar::Collections
             && let Some(saved) = self.saved.collections.take_preview_restore()
         {
@@ -673,7 +792,10 @@ impl Browser {
                 let width = if favorites {
                     ui.available_width()
                 } else {
-                    (ui.available_width() - filters::BUTTON_WIDTH - ui.spacing().item_spacing.x)
+                    (ui.available_width()
+                        - filters::BUTTON_WIDTH
+                        - tags::BUTTON_WIDTH
+                        - 2.0 * ui.spacing().item_spacing.x)
                         .max(80.0)
                 };
                 let response = ui.add_sized(
@@ -688,6 +810,9 @@ impl Browser {
                         .filter_editor
                         .ui(ui, self.library_view.query.filters)
                 };
+                if !favorites {
+                    self.saved.tags.filter_button(ui);
+                }
                 (response, changed)
             })
             .inner;
@@ -696,6 +821,10 @@ impl Browser {
         }
         if !favorites && let Some(filters) = filters::active(ui, self.library_view.query.filters) {
             self.apply_library_filters(filters);
+        }
+        if !favorites {
+            self.saved.tags.active_filters(ui);
+            self.handle_tag_action();
         }
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::F)) {
             response.request_focus();
@@ -717,6 +846,7 @@ impl Browser {
                 "favorites"
             } else if self.library_view.query_text.is_empty()
                 && self.library_view.query.filters.active_count() == 0
+                && self.library_view.query.tags.is_empty()
             {
                 "indexed sounds"
             } else {
@@ -820,6 +950,7 @@ impl Browser {
                 ui.label("Searching...");
             } else if self.library_view.query_text.is_empty()
                 && self.library_view.query.filters.active_count() == 0
+                && self.library_view.query.tags.is_empty()
             {
                 ui.label(
                     "No indexed sounds in this view. Add or rescan a source folder in Libraries.",
@@ -913,13 +1044,19 @@ impl Browser {
                                 )
                             })
                             .inner;
+                        let tag_clicked = self.saved.tags.row(
+                            ui,
+                            &sample.source,
+                            sound_table::tag_rect(response.rect),
+                            tags::Browse::CurrentLibrary,
+                        );
                         selection::active_outline(
                             ui,
                             &response,
                             self.library_view.selection.active_source()
                                 == Some(sample.source.as_path()),
                         );
-                        if response.clicked() {
+                        if response.clicked() && !tag_clicked {
                             choice = Some((
                                 sample.clone(),
                                 index,
@@ -1020,6 +1157,7 @@ impl Browser {
         }
         let ready = self.ready
             && self.saved.settled()
+            && self.saved.tags.settled()
             && (self.sidebar != Sidebar::Libraries || self.libraries.settled())
             && self.scan.is_none()
             && !self.preview.waveform_pending()
@@ -1121,6 +1259,7 @@ impl eframe::App for Browser {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.saved.tags.begin_frame();
         self.diagnostics.frame(ui.ctx());
         self.saved
             .favorites
@@ -1206,6 +1345,8 @@ impl eframe::App for Browser {
             });
         egui::Panel::top("header").show(ui, |ui| self.header(ui));
         egui::Panel::top("preview").show(ui, |ui| self.preview.ui(ui));
+        self.prepare_tag_target();
+        egui::Panel::top("tag-editor").show(ui, |ui| self.saved.tags.panel(ui));
         if self.show_details {
             egui::Panel::right("details")
                 .resizable(true)
@@ -1241,6 +1382,8 @@ impl eframe::App for Browser {
                 self.list(ui);
             }
         });
+        self.handle_tag_action();
+        self.saved.tags.request();
         self.handoff_file_drag(&ctx);
         let drag_label = egui::DragAndDrop::payload::<SoundDrag>(&ctx)
             .map(|drag| {
