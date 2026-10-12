@@ -36,9 +36,9 @@ produces corresponding companion databases.
 
 | Database | Data | Lifetime |
 | --- | --- | --- |
-| `catalog.sqlite` | Schema-3 metadata, native locators, FTS5 index, and derived folders | Rebuildable |
+| `catalog.sqlite` | Schema-4 metadata, native locators, FTS5 index, and derived folders | Rebuildable |
 | `catalog.libraries.sqlite` | Schema-1 named libraries and source registrations | Durable |
-| `catalog.collections.sqlite` | Schema-2 collections, entries, and global favorites | Durable |
+| `catalog.collections.sqlite` | Schema-3 collections, entries, and global favorites | Durable |
 | `catalog.waveforms.sqlite` | Versioned min/max peaks keyed by source revision | Rebuildable |
 
 Durable IDs are independent of catalog row IDs. Rebuilding the catalog leaves
@@ -50,6 +50,14 @@ catalog connection and owns library registration changes. Search uses an
 independent read-only connection. A separate collection worker owns saved edits
 and favorite reads. Accepted durable changes drain during shutdown even when
 completion events are no longer read by the UI.
+
+The catalog owns one bounded result-count memo on its connection. Generated SQL
+predicates and native bindings identify the view; direction/column changes reuse
+the same count. A main read snapshot is established before checking that
+connection's data version and own change counter. Commits invalidate the memo.
+Descriptors above 64 KiB are counted without retention. Text matching joins FTS
+IDs to live samples, and page queries select compact IDs before loading at most
+128 metadata rows. No persistent schema or audio data is added for this cache.
 
 Collection group commands carry the captured query, folder scope, native marks,
 and destination ID. The collection actor resolves the full marked set before

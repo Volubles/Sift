@@ -14,14 +14,16 @@ pub(crate) const MAX_SELECTION_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Clone, Copy)]
 pub(crate) enum OrderedTable {
     Samples,
+    SamplesMatchingText,
     Favorites,
     Entries,
 }
 
 impl OrderedTable {
-    fn sql(self) -> &'static str {
+    pub(crate) fn sql(self) -> &'static str {
         match self {
             Self::Samples => "samples s",
+            Self::SamplesMatchingText => "samples_fts JOIN samples s ON s.id=samples_fts.rowid",
             Self::Favorites => "favorites",
             Self::Entries => "entries",
         }

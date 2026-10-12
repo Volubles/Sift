@@ -4,8 +4,11 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags, params, params_from_iter, types::Value};
 
 use crate::library::{AudioMetadata, FileStamp, PROBE_VERSION};
-use crate::search::{PAGE_SIZE, SearchQuery};
+use crate::search::SearchQuery;
 use crate::{Error, Result, path_codec};
+
+mod query;
+use query::{QueryCount, QueryPlan};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SampleId(pub i64);
@@ -68,6 +71,7 @@ pub struct IndexedFile {
 
 pub struct Catalog {
     connection: Connection,
+    query_count: QueryCount,
 }
 
 impl Catalog {
@@ -157,7 +161,10 @@ impl Catalog {
             transaction.commit()?;
         }
         connection.pragma_update(None, "journal_mode", "WAL")?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            query_count: QueryCount::default(),
+        })
     }
 
     pub fn open_reader(path: &Path) -> Result<Self> {
@@ -167,7 +174,10 @@ impl Catalog {
         if version != 4 {
             return Err(Error::UnsupportedSchema(version));
         }
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            query_count: QueryCount::default(),
+        })
     }
 
     pub fn register_root(&mut self, root: &Path) -> Result<i64> {
@@ -270,39 +280,13 @@ impl Catalog {
         order: crate::search::SortOrder,
         offset: usize,
     ) -> Result<SearchPage> {
-        let (condition, mut values) = search_condition(query, scope)?;
-        let order = order.sql();
-        // Count and rows share a snapshot even while the indexer commits batches.
+        let plan = QueryPlan::new(query, scope)?;
+        // Counts, memo invalidation and rows share a main-database snapshot.
         let transaction = self.connection.transaction()?;
-        let total: i64 = transaction.query_row(
-            &format!("SELECT count(*) FROM samples s WHERE {condition}"),
-            params_from_iter(&values),
-            |row| row.get(0),
-        )?;
-        let total = usize::try_from(total).map_err(|_| Error::OutOfRange)?;
-        let limit_parameter = values.len() + 1;
-        let offset_parameter = values.len() + 2;
-        values.push(Value::Integer(PAGE_SIZE as i64));
-        values.push(Value::Integer(
-            i64::try_from(offset).map_err(|_| Error::OutOfRange)?,
-        ));
-        let sql = format!(
-            "SELECT s.id, s.source_path, s.name, s.path, s.format, s.size_bytes, s.duration_seconds, s.sample_rate, s.channels, s.bit_depth, s.metadata_error,s.modified_ns,s.created_ns FROM samples s WHERE {condition} ORDER BY {order} LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}"
-        );
-        let mut rows_out = Vec::with_capacity(PAGE_SIZE);
-        {
-            let mut statement = transaction.prepare(&sql)?;
-            let mut rows = statement.query(params_from_iter(&values))?;
-            while let Some(row) = rows.next()? {
-                rows_out.push(sample_from_row(row)?);
-            }
-        }
+        let total = self.query_count.get(&transaction, &plan)?;
+        let page = query::page(&transaction, &plan, order, offset, total)?;
         transaction.commit()?;
-        Ok(SearchPage {
-            total,
-            offset,
-            rows: rows_out,
-        })
+        Ok(page)
     }
 
     pub fn selection_sources(
@@ -329,13 +313,13 @@ impl Catalog {
         anchor: &Path,
         target: &Path,
     ) -> Result<crate::search::SelectionSources> {
-        let (condition, values) = search_condition(query, scope)?;
+        let plan = QueryPlan::new(query, scope)?;
         Ok(crate::search::selection::range_sources(
             &mut self.connection,
             crate::search::selection::OrderedView {
-                table: crate::search::selection::OrderedTable::Samples,
-                condition: &condition,
-                values,
+                table: plan.table,
+                condition: &plan.condition,
+                values: plan.values,
                 order,
             },
             anchor,
@@ -351,13 +335,13 @@ impl Catalog {
         active: &Path,
         anchor: Option<&Path>,
     ) -> Result<crate::search::SelectionPositions> {
-        let (condition, values) = search_condition(query, scope)?;
+        let plan = QueryPlan::new(query, scope)?;
         Ok(crate::search::selection::positions(
             &mut self.connection,
             crate::search::selection::OrderedView {
-                table: crate::search::selection::OrderedTable::Samples,
-                condition: &condition,
-                values,
+                table: plan.table,
+                condition: &plan.condition,
+                values: plan.values,
                 order,
             },
             active,
@@ -386,14 +370,14 @@ impl Catalog {
         order: crate::search::SortOrder,
         selection: &crate::search::SourceSelection,
     ) -> Result<Vec<crate::collections::Reference>> {
-        let (condition, values) = search_condition(query, scope)?;
+        let plan = QueryPlan::new(query, scope)?;
         let transaction = self.connection.transaction()?;
         let identities = crate::search::batch::selected_rows(
             &transaction,
-            "samples s",
+            plan.from(),
             &order.sql(),
-            &condition,
-            values,
+            &plan.condition,
+            plan.values,
             selection,
         )?;
         let references = {
@@ -664,23 +648,4 @@ fn directory_range(folder: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     };
     *last += 1;
     Ok((lower, upper))
-}
-
-fn search_condition(query: &SearchQuery, scope: &Scope) -> Result<(String, Vec<Value>)> {
-    let (condition, mut values) = match query {
-        SearchQuery::All => ("1", vec![]),
-        SearchQuery::FilenamePrefix { lower, upper } => (
-            "s.name_key >= ?1 AND s.name_key < ?2",
-            vec![Value::Text(lower.clone()), Value::Text(upper.clone())],
-        ),
-        SearchQuery::Substrings(expression) => (
-            "s.id IN (SELECT rowid FROM samples_fts WHERE samples_fts MATCH ?1)",
-            vec![Value::Text(expression.clone())],
-        ),
-    };
-    let condition = format!(
-        "({condition}) AND ({})",
-        scope_condition(scope, &mut values)?
-    );
-    Ok((condition, values))
 }
