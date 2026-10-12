@@ -322,7 +322,7 @@ impl Workers {
                             }
                             let result = (|| -> crate::Result<(Option<Sample>, FileStamp)> {
                                 let info = std::fs::symlink_metadata(&reference.source)?;
-                                if !info.is_file() || library::is_link(&info) {
+                                if !info.is_file() || crate::file_state::is_link(&info) {
                                     return Err(crate::Error::InvalidPath);
                                 }
                                 if let Some(parent) = reference.source.parent() {

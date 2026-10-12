@@ -95,16 +95,8 @@ impl Sources {
                 return Ok(false);
             }
             let metadata = path.symlink_metadata()?;
-            if !metadata.is_file() || metadata.file_type().is_symlink() {
+            if !metadata.is_file() || crate::file_state::is_link(&metadata) {
                 return Err(DragError::InvalidSource);
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-                // Match the scanner: do not unexpectedly export a replaced link.
-                if metadata.file_attributes() & 0x400 != 0 {
-                    return Err(DragError::InvalidSource);
-                }
             }
         }
         Ok(true)

@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::file_state::is_link;
 use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::{
@@ -441,18 +442,4 @@ fn insert_source(connection: &Connection, library: LibraryId, path: &Path) -> Re
         params![library.0, bytes],
     )?;
     Ok(())
-}
-
-fn is_link(metadata: &std::fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
-    false
 }

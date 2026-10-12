@@ -95,6 +95,12 @@ revision checks use file size and available timestamps. Missing sources retain
 saved references. Automatic relinking and content-hash deduplication are not
 implemented.
 
+Shared file-metadata primitives identify links/reparse points and convert signed
+epoch timestamps, including times before 1970. Index and saved-reference SQL use
+optional 64-bit nanoseconds; timestamps outside that range remain unknown. The
+derived waveform cache uses decimal timestamp keys instead of debug text. Older
+cache keys miss and rebuild on demand; durable saved data requires no migration.
+
 ## Background work
 
 Catalog event/read/index-command queues hold 8/4/4 messages. Search results have

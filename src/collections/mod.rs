@@ -6,10 +6,11 @@ pub mod worker;
 pub use selected::{ReferenceSelection, SelectionOrigin};
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use rusqlite::{Connection, TransactionBehavior, params};
 
+use crate::file_state::{is_link, timestamp};
 use crate::{catalog::Sample, library::AudioMetadata, path_codec};
 
 use crate::search::MAX_ACTION_SOUNDS;
@@ -487,26 +488,11 @@ fn validate_reference(reference: &Reference) -> Result<()> {
 
 fn revision(path: &Path) -> Result<(u64, Option<i64>)> {
     let metadata = path.symlink_metadata()?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    if !metadata.is_file() || is_link(&metadata) {
         return Err(Error::InvalidReference);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return Err(Error::InvalidReference);
-        }
     }
     let modified = timestamp(metadata.modified()?);
     Ok((metadata.len(), modified))
-}
-
-fn timestamp(time: SystemTime) -> Option<i64> {
-    let signed = match time.duration_since(UNIX_EPOCH) {
-        Ok(duration) => i128::try_from(duration.as_nanos()).ok()?,
-        Err(error) => -i128::try_from(error.duration().as_nanos()).ok()?,
-    };
-    i64::try_from(signed).ok()
 }
 
 fn read_reference(row: &rusqlite::Row<'_>) -> Result<Reference> {

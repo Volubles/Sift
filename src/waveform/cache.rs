@@ -25,7 +25,7 @@ impl Cache {
         path: &Path,
     ) -> Result<Option<Waveform>, Box<dyn std::error::Error + Send + Sync>> {
         let metadata = path.metadata()?;
-        let modified = format!("{:?}", metadata.modified()?);
+        let modified = crate::file_state::timestamp_key(metadata.modified()?)?;
         let key = crate::path_codec::encode(path);
         let record = self.connection.query_row(
             "SELECT rate, frames, span, peaks FROM waveforms WHERE path=?1 AND size=?2 AND modified=?3 AND algorithm=1",
@@ -88,7 +88,7 @@ impl Cache {
                 std::io::Error::other("Source changed before waveform cache publication").into(),
             );
         }
-        let modified = format!("{:?}", metadata.modified()?);
+        let modified = crate::file_state::timestamp_key(metadata.modified()?)?;
         let mut bytes = Vec::with_capacity(waveform.peaks.len() * 8);
         for peak in &waveform.peaks {
             bytes.extend(peak[0].to_le_bytes());

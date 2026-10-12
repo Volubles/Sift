@@ -5,9 +5,9 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::catalog::{Catalog, IndexedFile};
+use crate::file_state::{is_link, timestamp};
 use crate::{Error, Result};
 
 pub(crate) const PROBE_VERSION: i64 = 1;
@@ -42,10 +42,6 @@ impl FileStamp {
             created_ns: metadata.created().ok().and_then(timestamp),
         }
     }
-}
-
-fn timestamp(time: SystemTime) -> Option<i64> {
-    i64::try_from(time.duration_since(UNIX_EPOCH).ok()?.as_nanos()).ok()
 }
 
 #[derive(Clone, Default)]
@@ -113,20 +109,6 @@ pub(crate) fn ordinary_directory(path: &Path) -> Result<PathBuf> {
         }
     }
     Ok(path.canonicalize()?)
-}
-
-pub(crate) fn is_link(metadata: &std::fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
-    false
 }
 
 pub fn scan(

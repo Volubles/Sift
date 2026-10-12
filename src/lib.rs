@@ -15,6 +15,7 @@ pub mod platform;
 #[cfg(feature = "desktop")]
 pub mod desktop;
 
+mod file_state;
 mod names;
 mod path_codec;
 
