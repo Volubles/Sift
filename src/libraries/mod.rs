@@ -11,6 +11,7 @@ use crate::{
 };
 
 const APPLICATION_ID: i64 = 0x5346_4c42;
+pub(crate) const SCHEMA_VERSION: i64 = 1;
 pub const MAX_LIBRARIES: usize = 128;
 pub const MAX_SOURCES: usize = 32;
 const MAX_TOTAL_SOURCES: usize = 512;
@@ -63,11 +64,14 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Library index could not be read: {0}")]
     Catalog(#[from] crate::Error),
-    #[error("Unsupported library schema {0}; this application supports schema 1")]
+    #[error("Unsupported library schema {0}; this application supports schema {SCHEMA_VERSION}")]
     UnsupportedSchema(i64),
     #[error("This file is not a Sift library database")]
     WrongDatabase,
-    #[error("Use a library name of 1 to 120 characters without control characters")]
+    #[error(
+        "Use a library name of 1 to {} characters without control characters",
+        crate::names::MAX_CHARS
+    )]
     InvalidName,
     #[error("A library with that name already exists")]
     NameConflict,
@@ -76,7 +80,7 @@ pub enum Error {
     #[error("Choose an existing directory without a symbolic link or reparse point")]
     InvalidSource,
     #[error(
-        "This prototype supports up to 128 libraries, 32 sources per library, and 512 sources in total"
+        "This prototype supports up to {MAX_LIBRARIES} libraries, {MAX_SOURCES} sources per library, and {MAX_TOTAL_SOURCES} sources in total"
     )]
     Limit,
 }
@@ -104,7 +108,7 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         let app: i64 = connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        if version > 1 {
+        if version > SCHEMA_VERSION {
             return Err(Error::UnsupportedSchema(version));
         }
         if version == 0 {
@@ -287,8 +291,8 @@ impl Store {
     pub fn snapshot(&self, catalog: &Catalog) -> Result<Vec<Library>> {
         let mut statement = self
             .connection
-            .prepare("SELECT id,name FROM libraries ORDER BY name_key,id LIMIT 129")?;
-        let rows = statement.query_map([], |row| {
+            .prepare("SELECT id,name FROM libraries ORDER BY name_key,id LIMIT ?1")?;
+        let rows = statement.query_map([MAX_LIBRARIES as i64 + 1], |row| {
             Ok((LibraryId(row.get(0)?), row.get::<_, String>(1)?))
         })?;
         let mut libraries = Vec::new();
@@ -300,9 +304,9 @@ impl Store {
             let (id, name) = row?;
             let mut sources = Vec::new();
             let mut statement = self.connection.prepare(
-                "SELECT id,source_path FROM sources WHERE library_id=?1 ORDER BY id LIMIT 33",
+                "SELECT id,source_path FROM sources WHERE library_id=?1 ORDER BY id LIMIT ?2",
             )?;
-            let mut rows = statement.query([id.0])?;
+            let mut rows = statement.query(params![id.0, MAX_SOURCES as i64 + 1])?;
             while let Some(row) = rows.next()? {
                 if sources.len() == MAX_SOURCES || total_sources == MAX_TOTAL_SOURCES {
                     return Err(Error::Limit);
@@ -344,8 +348,8 @@ impl Store {
     pub(crate) fn source_paths(&self) -> Result<Vec<PathBuf>> {
         let mut statement = self
             .connection
-            .prepare("SELECT DISTINCT source_path FROM sources LIMIT 513")?;
-        let mut rows = statement.query([])?;
+            .prepare("SELECT DISTINCT source_path FROM sources LIMIT ?1")?;
+        let mut rows = statement.query([MAX_TOTAL_SOURCES as i64 + 1])?;
         let mut paths = Vec::new();
         while let Some(row) = rows.next()? {
             if paths.len() == MAX_TOTAL_SOURCES {
@@ -358,11 +362,9 @@ impl Store {
 }
 
 fn valid_name(name: &str) -> Result<String> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
-        return Err(Error::InvalidName);
-    }
-    Ok(name.to_owned())
+    crate::names::normalize(name)
+        .map(str::to_owned)
+        .ok_or(Error::InvalidName)
 }
 
 fn unique_folder_name(connection: &Connection, path: &Path) -> Result<String> {

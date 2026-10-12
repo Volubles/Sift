@@ -15,11 +15,11 @@ use selection::SelectionReader;
 #[cfg(windows)]
 mod windows_drag;
 
-const MAX_FILES: usize = 128;
+use crate::search::MAX_ACTION_SOUNDS;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DragError {
-    #[error("Choose between 1 and {MAX_FILES} source files")]
+    #[error("Choose between 1 and {MAX_ACTION_SOUNDS} source files")]
     InvalidCount,
     #[error("A source must have an absolute path")]
     RelativePath,
@@ -80,7 +80,7 @@ enum Presentation {
 
 impl Sources {
     fn new(paths: Vec<PathBuf>) -> Result<Self, DragError> {
-        if paths.is_empty() || paths.len() > MAX_FILES {
+        if paths.is_empty() || paths.len() > MAX_ACTION_SOUNDS {
             return Err(DragError::InvalidCount);
         }
         if paths.iter().any(|path| !path.is_absolute()) {

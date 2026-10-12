@@ -15,6 +15,7 @@ pub mod platform;
 #[cfg(feature = "desktop")]
 pub mod desktop;
 
+mod names;
 mod path_codec;
 
 #[derive(Debug, thiserror::Error)]
@@ -25,7 +26,10 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Catalog operation failed: {0}")]
     Database(#[from] rusqlite::Error),
-    #[error("Unsupported catalog schema {0}; this application supports schema 3")]
+    #[error(
+        "Unsupported catalog schema {0}; this application supports schema {supported}",
+        supported = catalog::SCHEMA_VERSION
+    )]
     UnsupportedSchema(i64),
     #[error("Invalid catalog path encoding")]
     InvalidPath,

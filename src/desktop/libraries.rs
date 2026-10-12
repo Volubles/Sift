@@ -714,7 +714,7 @@ impl Libraries {
                     let response = ui.add_enabled(
                         can_edit,
                         egui::TextEdit::singleline(text)
-                            .char_limit(120)
+                            .char_limit(crate::names::MAX_CHARS)
                             .hint_text("Library name"),
                     );
                     if *focus {

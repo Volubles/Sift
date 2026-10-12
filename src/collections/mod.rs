@@ -12,7 +12,9 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::{catalog::Sample, library::AudioMetadata, path_codec};
 
-pub const PAGE_SIZE: usize = 128;
+use crate::search::MAX_ACTION_SOUNDS;
+pub use crate::search::PAGE_SIZE;
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 const APPLICATION_ID: i64 = 0x5346_434c;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -93,11 +95,14 @@ pub enum Error {
     Database(#[from] rusqlite::Error),
     #[error("Source could not be read: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Unsupported collection schema {0}; this application supports schema 3")]
+    #[error("Unsupported collection schema {0}; this application supports schema {SCHEMA_VERSION}")]
     UnsupportedSchema(i64),
     #[error("This file is not a Sift collection database")]
     WrongDatabase,
-    #[error("Use a collection name of 1 to 120 characters without control characters")]
+    #[error(
+        "Use a collection name of 1 to {} characters without control characters",
+        crate::names::MAX_CHARS
+    )]
     InvalidName,
     #[error("A collection with that name already exists")]
     NameConflict,
@@ -107,7 +112,7 @@ pub enum Error {
     InvalidReference,
     #[error("The source has changed since indexing; refresh its library before saving it")]
     SourceChanged,
-    #[error("Choose between 1 and {PAGE_SIZE} sounds")]
+    #[error("Choose between 1 and {MAX_ACTION_SOUNDS} sounds")]
     InvalidBatch,
     #[error("Favorite status requests exceed their bounded path or byte limit")]
     InvalidStatusBatch,
@@ -131,7 +136,7 @@ impl Store {
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         let application: i64 =
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        if version != 3 {
+        if version != SCHEMA_VERSION {
             return Err(Error::UnsupportedSchema(version));
         }
         if application != APPLICATION_ID {
@@ -150,7 +155,7 @@ impl Store {
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         let application: i64 =
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        if version > 3 {
+        if version > SCHEMA_VERSION {
             return Err(Error::UnsupportedSchema(version));
         }
         if version == 0 && application == 0 {
@@ -271,7 +276,7 @@ impl Store {
     }
 
     pub fn add(&mut self, collection: CollectionId, references: &[Reference]) -> Result<()> {
-        if references.is_empty() || references.len() > PAGE_SIZE {
+        if references.is_empty() || references.len() > MAX_ACTION_SOUNDS {
             return Err(Error::InvalidBatch);
         }
         let mut revisions = Vec::with_capacity(references.len());
@@ -450,11 +455,9 @@ fn stored_text(row: &rusqlite::Row<'_>, index: usize, limit: usize) -> Result<St
 }
 
 fn valid_name(name: &str) -> Result<String> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
-        return Err(Error::InvalidName);
-    }
-    Ok(name.to_owned())
+    crate::names::normalize(name)
+        .map(str::to_owned)
+        .ok_or(Error::InvalidName)
 }
 
 fn validate_reference(reference: &Reference) -> Result<()> {

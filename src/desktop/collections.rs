@@ -1131,7 +1131,7 @@ impl Collections {
                             let response = ui.add_enabled(
                                 !saving,
                                 egui::TextEdit::singleline(text)
-                                    .char_limit(120)
+                                    .char_limit(crate::names::MAX_CHARS)
                                     .hint_text("Collection name"),
                             );
                             let just_opened = *focus;

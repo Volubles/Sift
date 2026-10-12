@@ -10,6 +10,8 @@ use crate::{Error, Result, path_codec};
 mod query;
 use query::{QueryPlan, QueryState};
 
+pub(crate) const SCHEMA_VERSION: i64 = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SampleId(pub i64);
 
@@ -86,7 +88,7 @@ impl Catalog {
         connection.busy_timeout(Duration::from_secs(2))?;
         connection.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 4 {
+        if version > SCHEMA_VERSION {
             return Err(Error::UnsupportedSchema(version));
         }
         if version == 0 {
@@ -171,7 +173,7 @@ impl Catalog {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::from_secs(2))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != 4 {
+        if version != SCHEMA_VERSION {
             return Err(Error::UnsupportedSchema(version));
         }
         Ok(Self {
