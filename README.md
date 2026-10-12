@@ -67,6 +67,10 @@ descendants. The chevron opens subfolders; the folder name selects its sounds.
 Clickable breadcrumbs return to ancestors, and **All sounds** restores the
 library scope. **Ctrl+F** focuses search within the current scope.
 
+Use **Filters** beside search for length, format, channels and sample rate.
+Active filters can be removed individually or cleared; marking and copying
+follow the filtered results. See [metadata filters](docs/FILTERS.md).
+
 ### Preview a sound
 
 Click a sound to load its waveform. Use **Play/Pause**, **Stop**, volume, or

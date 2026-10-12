@@ -1,4 +1,5 @@
 use super::{
+    filters::Editor,
     libraries::Location,
     navigation::{RetainedState, Views},
     pages::Pages,
@@ -21,6 +22,7 @@ pub(super) struct LibraryView {
     pub pages: Pages<Sample>,
     pub view_generation: u64,
     pub error: Option<String>,
+    pub filter_editor: Editor,
     pub(super) generation: u64,
     location: Location,
     saved: Views<Location, SavedView>,
@@ -31,15 +33,31 @@ struct SavedView {
     query_text: String,
     total: usize,
     order: crate::search::SortOrder,
+    filters: crate::search::filters::MetadataFilters,
 }
 
 impl RetainedState for SavedView {
     fn retained_bytes(&self) -> usize {
-        self.selection.retained_bytes() + self.query_text.capacity()
+        self.selection.retained_bytes()
+            + self.query_text.capacity()
+            + size_of::<crate::search::filters::MetadataFilters>()
     }
 }
 
 impl LibraryView {
+    pub(super) fn apply_filters(
+        &mut self,
+        workers: &Workers,
+        filters: crate::search::filters::MetadataFilters,
+    ) -> crate::Result<Option<usize>> {
+        filters.validate()?;
+        if self.query.filters == filters {
+            return Ok(None);
+        }
+        self.query.filters = filters;
+        Ok(self.reset_query(workers))
+    }
+
     pub(super) fn reset_query(&mut self, workers: &Workers) -> Option<usize> {
         self.selection.reset();
         self.view_generation += 1;
@@ -146,8 +164,8 @@ impl LibraryView {
         let previous_generation = self.selection.generation();
         self.selection.suspend();
         let query_text = std::mem::take(&mut self.query_text);
-        // A new folder inherits a search within the same bank. Revisiting one
-        // restores its own query; a different bank starts with an empty query.
+        // A new folder inherits search criteria and ordering within the same
+        // bank. Revisiting one restores its settings; a different bank starts fresh.
         let initial_query = if self.location.library == location.library {
             query_text.clone()
         } else {
@@ -158,6 +176,11 @@ impl LibraryView {
         } else {
             crate::search::SortOrder::default()
         };
+        let initial_filters = if self.location.library == location.library {
+            self.query.filters
+        } else {
+            Default::default()
+        };
         let previous = std::mem::replace(&mut self.location, location);
         let restored = self.saved.switch(
             previous,
@@ -166,6 +189,7 @@ impl LibraryView {
                 query_text,
                 total: self.total,
                 order: self.order,
+                filters: self.query.filters,
             },
             &self.location,
         );
@@ -174,12 +198,15 @@ impl LibraryView {
             query_text: initial_query,
             total: 0,
             order: initial_order,
+            filters: initial_filters,
         });
         self.selection = restored.selection;
         self.selection.resume(previous_generation);
         self.query_text = restored.query_text;
         self.total = restored.total;
         self.order = restored.order;
+        self.query.filters = restored.filters;
+        self.filter_editor = Editor::default();
         self.view_generation += 1;
         true
     }

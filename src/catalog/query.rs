@@ -54,6 +54,9 @@ impl QueryPlan {
 }
 
 fn append_filters(filters: MetadataFilters, condition: &mut String, values: &mut Vec<Value>) {
+    if filters.active_count() == 0 {
+        return;
+    }
     let mut predicates = Vec::with_capacity(4);
     match filters.length {
         Length::Any => {}

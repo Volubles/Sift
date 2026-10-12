@@ -36,6 +36,8 @@ different stages and cannot substitute for those end-to-end observations.
 - [Search and pagination comparison](SEARCH-PERFORMANCE.md) records before/after
   latency, correctness signatures, CPU time, and process memory on one fixed
   100,000-row fixture.
+- [Metadata filter measurements](FILTERS.md#sql-measurement) record combined
+  predicates, unknown lengths and page walks on the same fixture.
 
 The index fixture used tiny generated WAV files. Unchanged refreshes improved,
 while initial import remained slower than the preceding implementation.

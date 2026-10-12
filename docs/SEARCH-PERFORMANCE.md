@@ -154,3 +154,32 @@ remain similar in these single runs. Smaller operations also varied: empty-query
 p95 spanned 0.006–0.031 before and 0.006–0.138 ms after; this outlier is retained.
 These observations support preserving the measured catalog behavior through
 the cleanup and do not qualify desktop frame cost or end-to-end search latency.
+
+## Metadata-filter repeat
+
+The metadata-filter implementation was checked on 2026-10-12 against the same
+fixture and unfiltered protocol. All 240 totals, row counts and ordered-ID
+signatures match, and the database hash remains unchanged. The first newer-build
+run took 122.890 seconds, compared with 79.813 seconds in the earlier cleanup run.
+A subsequent repeat of the archived older binary also took longer, at 115.516
+seconds. The two contemporaneous runs are reported below; desktop activity and
+processor scheduling were not controlled, so the cause cannot be isolated from
+these measurements.
+
+| Unfiltered scenario | Older build repeat p95 | Metadata-filter build p95 |
+| --- | --- | --- |
+| All sounds, first page | 0.200–1.870 ms | 0.414–1.394 ms |
+| Folder, deep page | 35.398–72.226 ms | 45.631–70.471 ms |
+| Broad text, deep page | 37.273–101.968 ms | 50.153–102.071 ms |
+
+Process CPU time was 107.656 to 114.188 seconds, and sampled peak private memory
+was 6.758 to 6.781 MiB. The larger page ranges overlap, while the newer run used
+6.1% more process CPU time over the full workload. This is not evidence of a
+performance improvement or a verified absence of overhead. The older build's
+contemporaneous slowdown is retained rather than attributing the original
+before/after difference entirely to the feature.
+
+[Applied filter measurements](FILTERS.md#sql-measurement) separately cover five
+criteria combinations, first/deep pages and adjacent page walks with independent
+ordered-ID checks on the same 100,000-row fixture. Raw reports, both archived
+binaries and resource samples remain local.

@@ -21,6 +21,7 @@ use crate::waveform::Waveforms;
 use crate::worker::{Event, Workers};
 
 mod diagnostics;
+mod filters;
 use diagnostics::{CaptureStatus, Diagnostics};
 mod collections;
 use collections::Action as CollectionAction;
@@ -197,6 +198,19 @@ impl Browser {
         self.error = None;
         if let Some(offset) = self.library_view.reset_query(&self.workers) {
             self.request_page(offset);
+        }
+    }
+
+    fn apply_library_filters(&mut self, filters: crate::search::filters::MetadataFilters) {
+        match self.library_view.apply_filters(&self.workers, filters) {
+            Ok(offset) => {
+                self.error = None;
+                self.favorite_paths_dirty = true;
+                if let Some(offset) = offset {
+                    self.request_page(offset);
+                }
+            }
+            Err(error) => self.library_view.error = Some(error.to_string()),
         }
     }
 
@@ -649,15 +663,40 @@ impl Browser {
         }
         ui.add_space(12.0);
         let favorites = self.sidebar == Sidebar::Favorites;
-        let query_text = if favorites {
-            &mut self.saved.favorites.query_text
-        } else {
-            &mut self.library_view.query_text
-        };
-        let response = ui.add_sized(
-            [ui.available_width(), 34.0],
-            egui::TextEdit::singleline(query_text).hint_text("Search sounds by name or folder..."),
-        );
+        let (response, filter_change) = ui
+            .horizontal(|ui| {
+                let query_text = if favorites {
+                    &mut self.saved.favorites.query_text
+                } else {
+                    &mut self.library_view.query_text
+                };
+                let width = if favorites {
+                    ui.available_width()
+                } else {
+                    (ui.available_width() - filters::BUTTON_WIDTH - ui.spacing().item_spacing.x)
+                        .max(80.0)
+                };
+                let response = ui.add_sized(
+                    [width, 34.0],
+                    egui::TextEdit::singleline(query_text)
+                        .hint_text("Search sounds by name or folder..."),
+                );
+                let changed = if favorites {
+                    None
+                } else {
+                    self.library_view
+                        .filter_editor
+                        .ui(ui, self.library_view.query.filters)
+                };
+                (response, changed)
+            })
+            .inner;
+        if let Some(filters) = filter_change {
+            self.apply_library_filters(filters);
+        }
+        if !favorites && let Some(filters) = filters::active(ui, self.library_view.query.filters) {
+            self.apply_library_filters(filters);
+        }
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::F)) {
             response.request_focus();
         }
@@ -676,7 +715,9 @@ impl Browser {
             };
             let count_label = if favorites {
                 "favorites"
-            } else if self.library_view.query_text.is_empty() {
+            } else if self.library_view.query_text.is_empty()
+                && self.library_view.query.filters.active_count() == 0
+            {
                 "indexed sounds"
             } else {
                 "matching sounds"
@@ -777,7 +818,9 @@ impl Browser {
         if self.library_view.total == 0 {
             if self.library_view.pages.has_pending() {
                 ui.label("Searching...");
-            } else if self.library_view.query_text.is_empty() {
+            } else if self.library_view.query_text.is_empty()
+                && self.library_view.query.filters.active_count() == 0
+            {
                 ui.label(
                     "No indexed sounds in this view. Add or rescan a source folder in Libraries.",
                 );

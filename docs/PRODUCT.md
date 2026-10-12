@@ -33,6 +33,11 @@ provide a compact sort menu with an insertion-order option. Sorting preserves
 marked source identities and the active preview; queries and ranges share the
 selected order. Numeric unknowns sort last. See [Sound ordering](SORTING.md).
 
+The library table combines text with length, format, channel and sample-rate
+filters. Active criteria can be removed individually or cleared, and settings
+are remembered per library/folder during the session. Marking and copying use
+the same filtered view. See [Metadata filters](FILTERS.md).
+
 ## Data preservation
 
 Library registration, collection edits, and favoriting leave source names,
