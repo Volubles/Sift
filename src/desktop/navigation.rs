@@ -61,6 +61,22 @@ impl<K: PartialEq, V: RetainedState> Views<K, V> {
             .map(|(_, value)| value.retained_bytes())
             .sum();
     }
+
+    pub(super) fn update(&mut self, mut update: impl FnMut(&mut V)) {
+        for (_, value) in &mut self.entries {
+            update(value);
+        }
+        self.bytes = self
+            .entries
+            .iter()
+            .map(|(_, value)| value.retained_bytes())
+            .sum();
+        while self.bytes > MAX_RETAINED_BYTES {
+            if let Some((_, oldest)) = self.entries.pop_front() {
+                self.bytes -= oldest.retained_bytes();
+            }
+        }
+    }
 }
 
 #[cfg(all(test, sift_local_tests))]

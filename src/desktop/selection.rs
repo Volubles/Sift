@@ -533,7 +533,7 @@ impl Selection {
             id,
             egui::Sense::focusable_noninteractive(),
         );
-        if !response.has_focus() || egui::Popup::is_any_open(ui.ctx()) {
+        if !ui.is_enabled() || !response.has_focus() || egui::Popup::is_any_open(ui.ctx()) {
             return false;
         }
         ui.memory_mut(|memory| {

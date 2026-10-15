@@ -246,7 +246,7 @@ impl Libraries {
     }
 
     fn handle_tree_keys(&mut self, ui: &egui::Ui) {
-        if !self.tree_has_focus(ui.ctx()) {
+        if !ui.is_enabled() || !self.tree_has_focus(ui.ctx()) {
             return;
         }
         let id = ui.memory(|memory| memory.focused());

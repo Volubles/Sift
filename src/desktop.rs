@@ -482,7 +482,13 @@ impl Browser {
         if self.drags.busy() && ctx.input_mut(cancel_file_drag_requested) {
             self.drags.cancel();
         }
-        if self.saved.poll() && !self.library_view.query.tags.is_empty() {
+        let tags_changed = self.saved.poll();
+        let definition_changed = self
+            .saved
+            .tags
+            .take_management_change()
+            .is_some_and(|change| self.library_view.tags_changed(&change));
+        if definition_changed || (tags_changed && !self.library_view.query.tags.is_empty()) {
             self.reset_query();
         }
         if self.sidebar == Sidebar::Collections
@@ -826,7 +832,9 @@ impl Browser {
             self.saved.tags.active_filters(ui);
             self.handle_tag_action();
         }
-        if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::F)) {
+        if ui.is_enabled()
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::F))
+        {
             response.request_focus();
         }
         if response.changed() {
@@ -1260,6 +1268,9 @@ impl eframe::App for Browser {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.saved.tags.begin_frame();
+        if self.saved.tags.management_open() {
+            ui.disable();
+        }
         self.diagnostics.frame(ui.ctx());
         self.saved
             .favorites
@@ -1383,6 +1394,7 @@ impl eframe::App for Browser {
             }
         });
         self.handle_tag_action();
+        self.saved.tags.management_ui(&ctx);
         self.saved.tags.request();
         self.handoff_file_drag(&ctx);
         let drag_label = egui::DragAndDrop::payload::<SoundDrag>(&ctx)
@@ -1412,7 +1424,8 @@ impl eframe::App for Browser {
                 Color32::from_rgb(135, 222, 194),
             );
         }
-        if !egui::Popup::is_any_open(&ctx)
+        if !self.saved.tags.management_open()
+            && !egui::Popup::is_any_open(&ctx)
             && (!ctx.egui_wants_keyboard_input()
                 || self.library_view.selection.has_focus(&ctx)
                 || self.saved.sound_has_focus(&ctx))

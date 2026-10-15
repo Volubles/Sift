@@ -75,6 +75,7 @@ follow the filtered results. See [metadata filters](docs/FILTERS.md).
 Add your own labels in **Tags** below the waveform: type a name and press Enter,
 or choose **Existing**. Mark multiple sounds to add/remove a tag across the group.
 Click a chip or use **Tags** beside library search to filter by labels.
+**Manage tags** lists usage counts and lets you rename, merge or delete labels.
 Tags survive rebuilding the index. See [manual tags](docs/TAGS.md).
 
 ### Preview a sound

@@ -5,6 +5,8 @@ use eframe::egui::{self, Color32, RichText};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod manager;
+
 pub(super) const BUTTON_WIDTH: f32 = 88.0;
 const PANEL_PAGE: usize = 32;
 
@@ -214,6 +216,8 @@ pub(super) struct Tags {
     filter_text: String,
     filtering: bool,
     action: Option<Action>,
+    manager: manager::Manager,
+    management_change: Option<crate::tags::Change>,
 }
 impl Tags {
     pub(super) fn new(worker: Worker) -> Self {
@@ -230,6 +234,8 @@ impl Tags {
             filter_text: String::new(),
             filtering: false,
             action: None,
+            manager: manager::Manager::default(),
+            management_change: None,
         }
     }
     pub(super) fn begin_frame(&mut self) {
@@ -243,11 +249,22 @@ impl Tags {
             && !self.editor.needed
             && !self.suggestions.pending
             && !self.suggestions.needed
+            && self.manager.settled()
     }
     pub(super) fn poll(&mut self) -> bool {
         let mut changed = false;
         while let Some(event) = self.worker.poll() {
             match event {
+                Event::ManagementPage { generation, result } => {
+                    self.manager.page(generation, result)
+                }
+                Event::Managed { operation, result } => {
+                    if let Some(change) = self.manager.saved(operation, result) {
+                        self.invalidate();
+                        self.action = None;
+                        self.management_change = Some(change);
+                    }
+                }
                 Event::Ready => self.ready = true,
                 Event::StartupFailed(error) => {
                     eprintln!("Tag storage startup failed: {error}");
@@ -292,11 +309,7 @@ impl Tags {
                         Ok(_) => {
                             self.editor.save = None;
                             self.editor.input.clear();
-                            self.editor.invalidate();
-                            self.membership.invalidate();
-                            self.suggestions.generation += 1;
-                            self.suggestions.pending = false;
-                            self.suggestions.needed = true;
+                            self.invalidate();
                             changed = true;
                         }
                         Err(error) => {
@@ -310,6 +323,25 @@ impl Tags {
             }
         }
         changed
+    }
+    fn invalidate(&mut self) {
+        self.editor.page = 0;
+        self.editor.invalidate();
+        self.membership.filter_tags.clear();
+        self.membership.invalidate();
+        self.suggestions.generation += 1;
+        self.suggestions.pending = false;
+        self.suggestions.needed = true;
+        self.suggestions.items.clear();
+    }
+    pub(super) fn take_management_change(&mut self) -> Option<crate::tags::Change> {
+        self.management_change.take()
+    }
+    pub(super) fn management_open(&self) -> bool {
+        self.manager.open
+    }
+    pub(super) fn management_ui(&mut self, ctx: &egui::Context) {
+        self.manager.ui(ctx, &self.worker);
     }
     pub(super) fn set_target(
         &mut self,
@@ -361,6 +393,7 @@ impl Tags {
             self.membership.observed.clear();
             return;
         }
+        self.manager.request(&self.worker);
         self.membership.request(&self.worker);
         self.editor.request(&self.worker);
         self.suggestions.search(if self.filtering {
@@ -528,6 +561,11 @@ impl Tags {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Tags").strong());
                     ui.weak(&self.editor.caption);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add_enabled(self.ready && self.editor.save.is_none(), egui::Button::new("Manage tags").small()).clicked() {
+                            self.manager.open();
+                        }
+                    });
                 });
                 if let Some(error) = &self.startup_error {
                     ui.colored_label(Color32::from_rgb(245, 143, 140), error);

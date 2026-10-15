@@ -47,6 +47,19 @@ impl RetainedState for SavedView {
 }
 
 impl LibraryView {
+    pub(super) fn tags_changed(&mut self, change: &crate::tags::Change) -> bool {
+        self.saved.update(|view| {
+            if change.affects(&view.tags) {
+                change.apply(&mut view.tags);
+                view.selection.reset();
+                view.total = 0;
+            }
+        });
+        let affected = change.affects(&self.query.tags);
+        change.apply(&mut self.query.tags);
+        affected
+    }
+
     pub(super) fn apply_filters(
         &mut self,
         workers: &Workers,

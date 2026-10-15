@@ -43,6 +43,8 @@ Manual tags are global source associations, shared by libraries, favorites and
 collections. The editor creates/reuses names and adds/removes one association
 across marked sounds without replacing their other tags. Compact chips and
 library tag filters support finding tagged sounds. See [Tags](TAGS.md).
+Global tag management provides usage counts, rename, confirmed merge and deletion.
+Definition changes update active and remembered tag filters without changing audio.
 
 ## Data preservation
 

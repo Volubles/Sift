@@ -25,10 +25,45 @@ collection opens matching sounds across all libraries and clears text/metadata
 criteria. Applied tag criteria are remembered per library/folder during the
 session. Changing criteria resets marks and scrolling, as ordinary search does.
 
+## Manage tag names
+
+Open **Manage tags** in the tag panel, with or without a selected sound. Search
+by name prefix and select a tag. The list includes unused names and shows the
+number of linked sources across all libraries, including missing sources.
+
+- **Rename** updates the name everywhere and keeps the tag's identity and links.
+  Enter submits the name field. An existing name is rejected; use merge instead.
+- **Merge into...** lets you choose an existing destination, then confirm with
+  **Merge tags**. The destination keeps both sets of sounds, duplicate links count
+  once, and the source tag is removed. Choosing a destination alone saves nothing.
+- **Delete...** opens a confirmation. **Delete tag** removes the name and every
+  association. This differs from the editor's **×**, which removes associations
+  only from the current sound selection. Audio files and unrelated tags remain.
+
+The dialog blocks browsing shortcuts and edits behind it. An accepted change
+cannot be retargeted or dismissed while saving. Failed changes remain available
+for **Retry change** or **Back to editing**; closing and reopening the dialog
+retains a failed command during the session. Definition edits serialize on the
+existing tag worker and drain when the application closes.
+
+Renaming refreshes chips without resetting the sound selection. Merging replaces
+the source identity in active and remembered library filters; selecting both
+source and destination becomes one filter. A destination-only filter also
+refreshes because it may now match more sounds. Deleting a filtered tag removes
+that criterion. Affected views reset marks and scrolling when results change;
+text, folder scope, metadata criteria and the current preview remain. Returning
+to a folder cannot restore a removed identity.
+
+The list loads at most 32 definitions per page, retains at most 32 previous-page
+cursors, and provides **First**, **Previous** and **Next**. Search and successful
+changes restart paging. Idle frames do not submit list queries.
+
+## Storage and ownership
+
 Tags follow the native source locator. Renaming/moving a source does not transfer
 its associations automatically, and identical bytes at another locator do not
 share tags. Associations at the old locator remain preserved for explicit recovery.
-Global tag renaming/deletion, colors and relinking are further features.
+Tag colors and explicit source relinking are further features.
 
 The storage API supports transactional definition rename, merge and deletion.
 Renaming preserves identity and rejects another tag's name. Merging keeps the
