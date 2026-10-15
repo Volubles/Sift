@@ -6,10 +6,11 @@ pub enum Format {
     Flac,
     Mp3,
     Aiff,
+    Ogg,
 }
 
 impl Format {
-    pub const ALL: [Self; 4] = [Self::Wav, Self::Flac, Self::Mp3, Self::Aiff];
+    pub const ALL: [Self; 5] = [Self::Wav, Self::Flac, Self::Mp3, Self::Aiff, Self::Ogg];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -17,6 +18,7 @@ impl Format {
             Self::Flac => "FLAC",
             Self::Mp3 => "MP3",
             Self::Aiff => "AIFF",
+            Self::Ogg => "Ogg",
         }
     }
 
@@ -26,6 +28,7 @@ impl Format {
             Self::Flac => &["flac"],
             Self::Mp3 => &["mp3"],
             Self::Aiff => &["aif", "aiff"],
+            Self::Ogg => &["ogg", "oga"],
         }
     }
 }

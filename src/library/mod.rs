@@ -1,4 +1,4 @@
-mod metadata;
+pub(crate) mod metadata;
 
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -447,7 +447,7 @@ pub fn synchronize_path(
 fn supported_format(path: &Path) -> Option<String> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
-        "wav" | "flac" | "mp3" | "aiff" | "aif" => Some(extension),
+        "wav" | "flac" | "mp3" | "aiff" | "aif" | "ogg" | "oga" => Some(extension),
         _ => None,
     }
 }

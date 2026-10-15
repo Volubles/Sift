@@ -16,10 +16,12 @@ playback = ["dep:cpal"]
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
-symphonia = { version = "=0.6.1", default-features = false, features = ["wav", "aiff", "pcm", "flac", "mp3"] }
+symphonia = { version = "=0.6.1", default-features = false, features = ["wav", "aiff", "pcm", "flac", "mp3", "ogg", "vorbis"] }
 thiserror = "2"
 rubato = "=5.0.1"
 rtrb = "=0.3.3"
+tempfile = "=3.27.0"
+same-file = "=1.0.6"
 cpal = { version = "=0.18.2", optional = true, default-features = false }
 eframe = { version = "=0.36.2", optional = true, default-features = false, features = ["default_fonts", "glow", "accesskit", "x11", "wayland"] }
 
@@ -29,9 +31,6 @@ windows-core = { version = "=0.62.2", optional = true }
 windows = { version = "=0.62.2", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows-file-watcher = { version = "=0.2.2", default-features = false }
 windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security"] }
-
-[dev-dependencies]
-tempfile = "3"
 
 [lints.rust]
 unsafe_code = "deny"
