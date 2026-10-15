@@ -18,6 +18,8 @@ All core workflows run locally without accounts or network services.
 | `desktop::saved` | Shared saved-storage worker, operation IDs, and reply routing between the two independent views |
 | `desktop::tags` | Tag input, pending edits, bounded membership cache, summaries and suggestion generations |
 | `desktop::tags::manager` | Global tag dialog, definition paging, confirmations and captured pending changes |
+| `desktop::export` | Export dialog state, shared settings, per-sound overrides, review and per-file outcomes |
+| `export` | Captured selection resolution, validated export plans, encoder process lifecycle and file publication |
 | `desktop::diagnostics` | Optional native capture, frame counters, and joined background report writers |
 | `library` | Source enumeration, metadata probing, revisions, and synchronization |
 | `catalog` / `search` | Searchable metadata, folder queries, and query semantics |
@@ -187,6 +189,15 @@ query/scope identity across UI changes and validates the complete group before
 encoding. Its cancellation token spans resolution, file inspection, encoding,
 and native dispatch; released or cancelled gestures never restart from late
 ready results. The UI consumes each internal drag payload once at handoff.
+
+The export dialog lazily starts its own background owner. Review holds source
+handles and destination guards; editing/discarding releases that plan. One-slot
+commands and four-slot events bound communication, while revisions reject stale
+results. Conversion runs one packaged FFmpeg child at a time with bounded reader
+threads. Shutdown cancels the child, joins the actor, and retains completed files.
+Original mode copies bytes without FFmpeg; playback is independent of export.
+The [export contract](EXPORT.md) and [tool setup](EXPORT-TOOLS.md) describe
+publication, cancellation, metadata limits and distribution qualification.
 
 ## Build configuration
 

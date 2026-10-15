@@ -21,6 +21,7 @@ use crate::waveform::Waveforms;
 use crate::worker::{Event, Workers};
 
 mod diagnostics;
+mod export;
 mod filters;
 mod tags;
 use diagnostics::{CaptureStatus, Diagnostics};
@@ -160,6 +161,7 @@ struct Browser {
     last_index_refresh: Instant,
     folder: Option<PathBuf>,
     diagnostics: Diagnostics,
+    export: export::Export,
 }
 
 impl Browser {
@@ -174,6 +176,7 @@ impl Browser {
     ) -> Self {
         let diagnostics = Diagnostics::new(options.smoke_screenshot, capture_passed);
         Self {
+            export: export::Export::new(options.database.clone()),
             workers,
             preview: Preview::new(waveforms, player),
             library_view: LibraryView::default(),
@@ -479,6 +482,7 @@ impl Browser {
     }
 
     fn accept_events(&mut self, ctx: &egui::Context) {
+        self.export.poll();
         if self.drags.busy() && ctx.input_mut(cancel_file_drag_requested) {
             self.drags.cancel();
         }
@@ -992,6 +996,7 @@ impl Browser {
         });
         let mut drag_sample = None;
         let mut favorite = None;
+        let mut export_requested = false;
         self.library_view
             .selection
             .feedback(ui, self.library_view.total);
@@ -1032,24 +1037,28 @@ impl Browser {
                                     .remember(Reference::from(sample));
                             }
                         }
+                        let row_id = ui.make_persistent_id(("library-row", sample.id.0));
                         let response = ui
-                            .horizontal(|ui| {
-                                if star_button(
-                                    ui,
-                                    self.saved.favorites.status(&sample.source),
-                                    self.saved.favorites.can_edit(),
-                                    &sample.name,
-                                )
-                                .clicked()
-                                {
-                                    favorite = Some(Reference::from(sample));
-                                }
-                                table_row(
-                                    ui,
-                                    sample,
-                                    self.library_view.selection.contains(&sample.source, index),
-                                    index,
-                                )
+                            .scope_builder(egui::UiBuilder::new().id(row_id), |ui| {
+                                ui.horizontal(|ui| {
+                                    if star_button(
+                                        ui,
+                                        self.saved.favorites.status(&sample.source),
+                                        self.saved.favorites.can_edit(),
+                                        &sample.name,
+                                    )
+                                    .clicked()
+                                    {
+                                        favorite = Some(Reference::from(sample));
+                                    }
+                                    table_row(
+                                        ui,
+                                        sample,
+                                        self.library_view.selection.contains(&sample.source, index),
+                                        index,
+                                    )
+                                })
+                                .inner
                             })
                             .inner;
                         let tag_clicked = self.saved.tags.row(
@@ -1064,6 +1073,26 @@ impl Browser {
                             self.library_view.selection.active_source()
                                 == Some(sample.source.as_path()),
                         );
+                        if response.secondary_clicked() {
+                            self.marked_view = Sidebar::Libraries;
+                            if !self.library_view.selection.contains(&sample.source, index) {
+                                self.library_view.selection.choose(
+                                    key,
+                                    index,
+                                    &sample.source,
+                                    Gesture::Replace,
+                                );
+                                self.library_view
+                                    .selection
+                                    .remember(Reference::from(sample));
+                            }
+                        }
+                        response.context_menu(|ui| {
+                            if ui.button("Export selected...").clicked() {
+                                export_requested = true;
+                                ui.close();
+                            }
+                        });
                         if response.clicked() && !tag_clicked {
                             choice = Some((
                                 sample.clone(),
@@ -1094,6 +1123,14 @@ impl Browser {
         self.library_view
             .selection
             .remember_scroll(scroll.state.offset.y, scroll.inner);
+        if export_requested {
+            self.marked_view = Sidebar::Libraries;
+            self.export.open(
+                self.marked_selection()
+                    .map(crate::export::worker::Input::Selection),
+                ui.ctx(),
+            );
+        }
         if let Some(reference) = favorite {
             self.saved.toggle_favorite(&reference);
         }
@@ -1268,7 +1305,7 @@ impl eframe::App for Browser {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.saved.tags.begin_frame();
-        if self.saved.tags.management_open() {
+        if self.saved.tags.management_open() || self.export.is_open() {
             ui.disable();
         }
         self.diagnostics.frame(ui.ctx());
@@ -1289,6 +1326,7 @@ impl eframe::App for Browser {
             self.drags.cancel();
         }
         egui::Panel::bottom("footer").show(ui, |ui| {
+            self.export.status(ui);
             ui.label(
                 RichText::new(
                     "Source files stay in place. Collections and favorites save automatically.",
@@ -1351,6 +1389,10 @@ impl eframe::App for Browser {
                             let selection = self.marked_selection();
                             self.saved.collections.add_selected(&mut self.saved.storage, collection, selection);
                         }
+                        CollectionAction::Export(selection) => {
+                            self.marked_view = Sidebar::Collections;
+                            self.export.open(selection.map(crate::export::worker::Input::Selection), &ctx);
+                        }
                     }
                 }
             });
@@ -1387,6 +1429,11 @@ impl eframe::App for Browser {
                             self.select_favorite(sound);
                             self.sound_drag(&ctx, reference, Sidebar::Favorites);
                         }
+                        FavoriteAction::Export(selection) => {
+                            self.marked_view = Sidebar::Favorites;
+                            self.export
+                                .open(selection.map(crate::export::worker::Input::Selection), &ctx);
+                        }
                     }
                 }
             } else {
@@ -1395,6 +1442,7 @@ impl eframe::App for Browser {
         });
         self.handle_tag_action();
         self.saved.tags.management_ui(&ctx);
+        self.export.ui(&ctx);
         self.saved.tags.request();
         self.handoff_file_drag(&ctx);
         let drag_label = egui::DragAndDrop::payload::<SoundDrag>(&ctx)
@@ -1425,6 +1473,7 @@ impl eframe::App for Browser {
             );
         }
         if !self.saved.tags.management_open()
+            && !self.export.is_open()
             && !egui::Popup::is_any_open(&ctx)
             && (!ctx.egui_wants_keyboard_input()
                 || self.library_view.selection.has_focus(&ctx)

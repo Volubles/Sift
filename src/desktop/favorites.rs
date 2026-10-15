@@ -42,6 +42,7 @@ pub(super) struct Favorites {
 pub(super) enum Action {
     Select(Favorite),
     Drag(Favorite),
+    Export(Result<crate::collections::ReferenceSelection, String>),
 }
 
 impl Favorites {
@@ -403,6 +404,7 @@ impl Favorites {
                 .map(|sound| (sound.clone(), index, gesture))
         });
         let mut action = None;
+        let mut export_requested = false;
         let mut remove = None;
         self.selection.feedback(ui, self.total);
         if table_heading(ui, &mut self.order) {
@@ -439,57 +441,78 @@ impl Favorites {
                                 self.selection.remember(sound.reference.clone());
                             }
                         }
-                        ui.horizontal(|ui| {
-                            if star_button(ui, Some(true), can_edit, &sound.reference.name)
-                                .clicked()
-                            {
-                                remove = Some(sound.reference.source.clone());
-                            }
-                            let response = reference_row(
-                                ui,
-                                &sound.reference,
-                                &sound.availability,
-                                self.selection.contains(&sound.reference.source, index),
-                                index,
-                            );
-                            let tag_clicked = tags.row(
-                                ui,
-                                &sound.reference.source,
-                                super::sound_table::tag_rect(response.rect),
-                                super::tags::Browse::AllLibraries,
-                            );
-                            selection::active_outline(
-                                ui,
-                                &response,
-                                self.selection.active_source()
-                                    == Some(sound.reference.source.as_path()),
-                            );
-                            if response.clicked() && !tag_clicked {
-                                choice = Some((
-                                    sound.clone(),
+                        let row_id = ui.make_persistent_id(("favorite-row", sound.id.0));
+                        ui.scope_builder(egui::UiBuilder::new().id(row_id), |ui| {
+                            ui.horizontal(|ui| {
+                                if star_button(ui, Some(true), can_edit, &sound.reference.name)
+                                    .clicked()
+                                {
+                                    remove = Some(sound.reference.source.clone());
+                                }
+                                let response = reference_row(
+                                    ui,
+                                    &sound.reference,
+                                    &sound.availability,
+                                    self.selection.contains(&sound.reference.source, index),
                                     index,
-                                    Gesture::from_modifiers(ui.input(|input| input.modifiers)),
-                                ));
-                                selection::focus(ui, focus_id);
-                            }
-                            if sound.availability.usable()
-                                && response.drag_started_by(egui::PointerButton::Primary)
-                            {
-                                if !self.selection.contains(&sound.reference.source, index) {
+                                );
+                                let tag_clicked = tags.row(
+                                    ui,
+                                    &sound.reference.source,
+                                    super::sound_table::tag_rect(response.rect),
+                                    super::tags::Browse::AllLibraries,
+                                );
+                                selection::active_outline(
+                                    ui,
+                                    &response,
+                                    self.selection.active_source()
+                                        == Some(sound.reference.source.as_path()),
+                                );
+                                if response.secondary_clicked()
+                                    && !self.selection.contains(&sound.reference.source, index)
+                                {
                                     self.selection.choose(
                                         key,
                                         index,
                                         &sound.reference.source,
                                         Gesture::Replace,
                                     );
+                                    self.selection.remember(sound.reference.clone());
                                 }
-                                self.selection.activate(key, index, &sound.reference.source);
-                                self.selection.remember(sound.reference.clone());
-                                selection::focus(ui, focus_id);
-                                choice = None;
-                                action = Some(Action::Drag(sound.clone()));
-                            }
-                            response.on_hover_text(sound.reference.source.display().to_string());
+                                response.context_menu(|ui| {
+                                    if ui.button("Export selected...").clicked() {
+                                        export_requested = true;
+                                        ui.close();
+                                    }
+                                });
+                                if response.clicked() && !tag_clicked {
+                                    choice = Some((
+                                        sound.clone(),
+                                        index,
+                                        Gesture::from_modifiers(ui.input(|input| input.modifiers)),
+                                    ));
+                                    selection::focus(ui, focus_id);
+                                }
+                                if sound.availability.usable()
+                                    && response.drag_started_by(egui::PointerButton::Primary)
+                                {
+                                    if !self.selection.contains(&sound.reference.source, index) {
+                                        self.selection.choose(
+                                            key,
+                                            index,
+                                            &sound.reference.source,
+                                            Gesture::Replace,
+                                        );
+                                    }
+                                    self.selection.activate(key, index, &sound.reference.source);
+                                    self.selection.remember(sound.reference.clone());
+                                    selection::focus(ui, focus_id);
+                                    choice = None;
+                                    action = Some(Action::Drag(sound.clone()));
+                                }
+                                response
+                                    .on_hover_text(sound.reference.source.display().to_string());
+                            })
                         });
                     } else {
                         ui.add_sized(
@@ -556,6 +579,9 @@ impl Favorites {
             )
         {
             self.selection.sent();
+        }
+        if export_requested {
+            action = Some(Action::Export(self.selected_references()));
         }
         action
     }

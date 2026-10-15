@@ -346,7 +346,13 @@ impl Plan {
                         progress,
                     )?;
                 let output = crate::library::metadata::read(temporary.path(), token.clone())
-                    .map_err(|e| Error::Encoder(format!("Output verification failed: {e}")))?;
+                    .map_err(|error| {
+                        if token.is_cancelled() {
+                            Error::Cancelled
+                        } else {
+                            Error::Encoder(format!("Output verification failed: {error}"))
+                        }
+                    })?;
                 let expected_rate = job.item.settings.sample_rate.or(job.audio.sample_rate);
                 let expected_channels = match job.item.settings.channels {
                     super::Channels::Original => job.audio.channels,

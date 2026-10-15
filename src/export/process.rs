@@ -370,3 +370,11 @@ fn read_tail(mut stream: impl Read) -> std::io::Result<String> {
     }
     Ok(String::from_utf8_lossy(&tail.into_iter().collect::<Vec<_>>()).into_owned())
 }
+
+#[cfg(all(test, sift_local_tests))]
+mod tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/export/process.rs"
+    ));
+}

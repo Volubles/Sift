@@ -79,6 +79,7 @@ pub(super) enum Action {
     Select(Entry),
     Drag(Entry),
     AddMarked(CollectionId),
+    Export(Result<crate::collections::ReferenceSelection, String>),
 }
 
 impl Collections {
@@ -601,6 +602,7 @@ impl Collections {
         marked_count: usize,
     ) -> Option<Action> {
         let mut action = None;
+        let mut export_requested = false;
         self.request_pages(storage);
         let can_edit = self.can_edit(storage);
         ui.horizontal(|ui| {
@@ -857,94 +859,126 @@ impl Collections {
                                 Availability::Missing => "Missing · ",
                                 Availability::Unavailable(_) => "Unavailable · ",
                             };
-                            ui.horizontal(|ui| {
-                                let membership = favorites.status(&entry.reference.source);
-                                if star_button(
-                                    ui,
-                                    membership,
-                                    storage.ready
-                                        && favorites.can_edit()
-                                        && (membership == Some(true)
-                                            || entry.availability.usable()),
-                                    &entry.reference.name,
-                                )
-                                .clicked()
-                                {
-                                    favorite = Some(entry.reference.clone());
-                                }
-                                let response = ui.add_sized(
-                                    [ui.available_width(), 28.0],
-                                    egui::Button::new(format!(
-                                        "{}{}",
-                                        status, entry.reference.name
-                                    ))
-                                    .truncate()
-                                    .selected(
-                                        self.selection.contains(&entry.reference.source, position),
+                            let row_id = ui.make_persistent_id(("collection-row", entry.id.0));
+                            ui.scope_builder(egui::UiBuilder::new().id(row_id), |ui| {
+                                ui.horizontal(|ui| {
+                                    let membership = favorites.status(&entry.reference.source);
+                                    if star_button(
+                                        ui,
+                                        membership,
+                                        storage.ready
+                                            && favorites.can_edit()
+                                            && (membership == Some(true)
+                                                || entry.availability.usable()),
+                                        &entry.reference.name,
                                     )
-                                    .sense(egui::Sense::click_and_drag()),
-                                );
-                                selection::active_outline(
-                                    ui,
-                                    &response,
-                                    self.selection.active_source()
-                                        == Some(entry.reference.source.as_path()),
-                                );
-                                if response.clicked() {
-                                    choice = Some((
-                                        entry.clone(),
-                                        position,
-                                        Gesture::from_modifiers(ui.input(|input| input.modifiers)),
-                                    ));
-                                    selection::focus(ui, focus_id);
-                                }
-                                if entry.availability.usable()
-                                    && response.drag_started_by(egui::PointerButton::Primary)
-                                {
-                                    if !self.selection.contains(&entry.reference.source, position) {
+                                    .clicked()
+                                    {
+                                        favorite = Some(entry.reference.clone());
+                                    }
+                                    let response = ui.add_sized(
+                                        [ui.available_width(), 28.0],
+                                        egui::Button::new(format!(
+                                            "{}{}",
+                                            status, entry.reference.name
+                                        ))
+                                        .truncate()
+                                        .selected(
+                                            self.selection
+                                                .contains(&entry.reference.source, position),
+                                        )
+                                        .sense(egui::Sense::click_and_drag()),
+                                    );
+                                    selection::active_outline(
+                                        ui,
+                                        &response,
+                                        self.selection.active_source()
+                                            == Some(entry.reference.source.as_path()),
+                                    );
+                                    if response.clicked() {
+                                        choice = Some((
+                                            entry.clone(),
+                                            position,
+                                            Gesture::from_modifiers(
+                                                ui.input(|input| input.modifiers),
+                                            ),
+                                        ));
+                                        selection::focus(ui, focus_id);
+                                    }
+                                    if entry.availability.usable()
+                                        && response.drag_started_by(egui::PointerButton::Primary)
+                                    {
+                                        if !self
+                                            .selection
+                                            .contains(&entry.reference.source, position)
+                                        {
+                                            self.selection.choose(
+                                                key,
+                                                position,
+                                                &entry.reference.source,
+                                                Gesture::Replace,
+                                            );
+                                        }
+                                        self.selection.activate(
+                                            key,
+                                            position,
+                                            &entry.reference.source,
+                                        );
+                                        self.selection.remember(entry.reference.clone());
+                                        self.previous_marks = None;
+                                        selection::focus(ui, focus_id);
+                                        choice = None;
+                                        action = Some(Action::Drag(entry.clone()));
+                                    }
+                                    if response.secondary_clicked()
+                                        && !self
+                                            .selection
+                                            .contains(&entry.reference.source, position)
+                                    {
+                                        self.previous_marks = None;
                                         self.selection.choose(
                                             key,
                                             position,
                                             &entry.reference.source,
                                             Gesture::Replace,
                                         );
+                                        self.selection.remember(entry.reference.clone());
                                     }
-                                    self.selection
-                                        .activate(key, position, &entry.reference.source);
-                                    self.selection.remember(entry.reference.clone());
-                                    self.previous_marks = None;
-                                    selection::focus(ui, focus_id);
-                                    choice = None;
-                                    action = Some(Action::Drag(entry.clone()));
-                                }
-                                response.context_menu(|ui| {
-                                    if ui
-                                        .add_enabled(
-                                            can_edit,
-                                            egui::Button::new(
-                                                if self
-                                                    .selection
-                                                    .contains(&entry.reference.source, position)
-                                                    && self.selection.count(total) > 1
-                                                {
-                                                    "Remove selected sounds"
-                                                } else {
-                                                    "Remove from collection"
-                                                },
-                                            ),
-                                        )
-                                        .clicked()
-                                    {
-                                        remove = Some((
-                                            entry.id,
-                                            self.selection
-                                                .contains(&entry.reference.source, position),
-                                        ));
-                                        ui.close();
-                                    }
-                                });
-                                response
-                                    .on_hover_text(entry.reference.source.display().to_string());
+                                    response.context_menu(|ui| {
+                                        if ui.button("Export selected...").clicked() {
+                                            self.previous_marks = None;
+                                            export_requested = true;
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                can_edit,
+                                                egui::Button::new(
+                                                    if self
+                                                        .selection
+                                                        .contains(&entry.reference.source, position)
+                                                        && self.selection.count(total) > 1
+                                                    {
+                                                        "Remove selected sounds"
+                                                    } else {
+                                                        "Remove from collection"
+                                                    },
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            remove = Some((
+                                                entry.id,
+                                                self.selection
+                                                    .contains(&entry.reference.source, position),
+                                            ));
+                                            ui.close();
+                                        }
+                                    });
+                                    response.on_hover_text(
+                                        entry.reference.source.display().to_string(),
+                                    );
+                                })
                             });
                         }
                         first_visible
@@ -1062,6 +1096,9 @@ impl Collections {
             });
         }
         self.dialog(ui.ctx(), storage);
+        if export_requested {
+            action = Some(Action::Export(self.selected_references()));
+        }
         action
     }
 

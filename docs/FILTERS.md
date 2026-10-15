@@ -7,8 +7,9 @@ and saved collection contents keep their own search and sorting.
 - **Length:** Any, a range in seconds, or Unknown. Bounds are inclusive; leave
   one bound empty for an open end. Ranges exclude unknown lengths unless
   **Include unknown lengths** is checked. Zero seconds is a valid bound.
-- **Format:** select WAV, FLAC, MP3, or AIFF. Multiple choices match any selected
-  format; no choices means unrestricted. AIFF includes `.aif` and `.aiff`.
+- **Format:** select WAV, FLAC, MP3, AIFF, or Ogg. Multiple choices match any
+  selected format; no choices means unrestricted. AIFF includes `.aif` and `.aiff`;
+  Ogg includes `.ogg` and `.oga` with Vorbis audio.
 - **Channels:** Any, Mono, Stereo, or Unknown. Any includes multichannel sounds.
 - **Sample rate:** Any, a listed rate in kHz, or Unknown.
 

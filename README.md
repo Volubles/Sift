@@ -110,6 +110,17 @@ the complete selection as copies; Explorer handles
 destination conflicts and progress. Escape or an unsuitable drop location cancels
 the gesture. Original bytes and collection references stay in place.
 
+Right-click sounds in Libraries, Favorites, or Collections and select
+**Export selected...** to create independent files. Choose Original, WAV, AIFF,
+FLAC, MP3, or Ogg Vorbis, set shared options, and override individual sounds when
+needed. Review final names and conflicts before starting. Keep both is the default;
+replacing existing files requires confirmation. Hide the dialog to keep browsing
+and reopen its progress/report from the footer. See [Audio export](docs/EXPORT.md).
+
+Conversion requires the local [export-tools bundle](docs/EXPORT-TOOLS.md);
+Original mode needs no encoder. Converted files currently carry audio only,
+without preservation guarantees for embedded metadata or cue/loop markers.
+
 ### Keyboard shortcuts
 
 | Context | Key | Action |
@@ -133,12 +144,12 @@ rate, or channel count; click again to reverse direction. Collection contents
 have a compact sort menu, including the original added order. Marks and preview
 survive sorting. See [Sound ordering](docs/SORTING.md).
 
-The index recognizes **WAV, FLAC, MP3, and AIFF**. Container metadata support does
-not guarantee playback of every codec variant or compatibility with every device.
+The index recognizes **WAV, FLAC, MP3, AIFF, and Ogg Vorbis**. Container metadata
+support does not guarantee playback of every codec variant or compatibility
+with every device.
 
 Collection adds/removals and outgoing dragging support groups of up to 128 sounds.
-Collection folders and item ordering, tags,
-application-managed export, and explicit relinking of moved
+Collection folders, user-controlled item ordering, and explicit relinking of moved
 saved sources are later work. Similarity search is optional future work.
 
 Large-library measurements use generated fixtures with documented limits.
@@ -203,4 +214,6 @@ Use `--database PATH` to isolate a test. Queries return at most 128 results per 
 | Files and live updates | [Incremental indexing](docs/INDEXING.md) |
 | Design and behavior | [Architecture](docs/ARCHITECTURE.md), [Product overview](docs/PRODUCT.md) |
 | Resource use and evidence | [Performance](docs/PERFORMANCE.md), [Renderer baseline](docs/BASELINE.md), [Index measurements](docs/INDEXING-BASELINE.md) |
+| Audio export | [Formats, settings, conflicts, and source preservation](docs/EXPORT.md) |
+| Export runtime | [Local setup and distribution qualification](docs/EXPORT-TOOLS.md) |
 | Brand assets | [SVG masters and transparent PNG exports](assets/brand/README.md) |

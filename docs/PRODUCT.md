@@ -25,6 +25,13 @@ Pausing live updates retains data; resuming checks for missed changes.
 Missing and unavailable sources remain distinguishable from empty results or
 unsupported audio.
 
+The export dialog creates independent files from up to 128 marked sounds.
+Shared settings and per-sound overrides cover names, format, rate, channels and
+quality. Original mode preserves bytes; conversion supports WAV, AIFF, FLAC, MP3
+and Ogg Vorbis through packaged tools. Review handles conflicts before background
+export; cancellation preserves completed files and reports partial outcomes.
+See [Audio export](EXPORT.md) for settings and metadata limits.
+
 External dragging offers copying to Explorer. The destination owns copying
 progress and conflicts. Internal dragging adds references to collections.
 
@@ -60,14 +67,14 @@ ambiguous locations are not matched automatically to replacement sounds.
 ## Supported scope
 
 The application is a Windows prototype with a CLI-only configuration sharing
-the same core. WAV, FLAC, MP3, and AIFF metadata are recognized; codec variants,
-devices, external drives, and network shares have individual qualification limits.
+the same core. WAV, FLAC, MP3, AIFF, and Ogg Vorbis metadata are recognized. Codec
+variants, devices, external drives, and network shares have individual qualification limits.
 The core workflow works offline.
 
 Collection adds and removals accept marked groups of up to 128 sounds, including
 unloaded rows. Internal group dragging saves references; outgoing dragging offers
 up to 128 marked originals to the destination as copies. Collection folders,
-user-controlled item ordering, application-managed export, portable saved
+user-controlled item ordering, portable saved
 selections, and explicit source relinking are not implemented. Similarity search
 is optional future work. Recording, audio editing, cloud synchronization, and
 a timeline are outside the current product scope.

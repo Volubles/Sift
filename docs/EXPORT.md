@@ -1,5 +1,25 @@
 # Audio export
 
+Right-click one or more marked sounds in Libraries, Favorites or Collections
+and select **Export selected...**. Right-clicking an unmarked sound replaces the
+marks with that sound; right-clicking a marked sound keeps the group.
+
+Choose an existing destination folder and shared settings. Select a source row
+to edit its export name or enable **Custom settings** for that sound. Prefix,
+suffix and optional numbering apply to the whole batch; source names stay intact.
+**Use shared settings** removes a per-sound override.
+
+**Review export** checks the batch and displays final names, skipped files and
+replacements. Changing settings invalidates the review. **Export files** becomes
+available after successful review; existing replacements require a separate
+confirmation checkbox. Keep both is the default conflict policy.
+
+During export, **Cancel export** cancels remaining work; **Hide** lets you browse
+while it continues. The footer reopens progress and the final report. Each row
+shows its actual outcome, including names changed by a late collision. Completed
+files remain after cancellation. **Open destination** opens the output folder.
+Settings are retained within the open session, not persisted between app starts.
+
 The export engine creates independent files from captured sound selections.
 Original mode copies exact bytes; WAV, AIFF, FLAC, MP3 and Ogg Vorbis read the
 original source directly through the [packaged runtime](EXPORT-TOOLS.md).
