@@ -1,4 +1,4 @@
-# Rust application: keep Cargo.lock tracked when the application is created.
+# Rust build and distribution output.
 /target/
 /dist/
 
@@ -8,6 +8,17 @@
 /samples/
 /exports/
 /benchmarks/results/
+
+# Workspace guidance and development journals are local to this checkout.
+/AGENTS.md
+/GIT-COMMIT-CONVENTIONS.md
+/docs/STATUS.md
+/docs/STACK-REVIEW.md
+/docs/CHECKPOINT.md
+
+# Verification sources and fixtures are maintained privately in this checkout.
+/tests/
+/scripts/measure-idle.ps1
 *.db
 *.db-shm
 *.db-wal
@@ -34,5 +45,5 @@ Desktop.ini
 *.swp
 *.swo
 
-# Audio extensions are deliberately not ignored globally: small, licensed
-# regression fixtures may eventually belong in tests/fixtures/.
+# Audio extensions are deliberately not ignored globally. Local verification
+# fixtures belong under the ignored tests/ or .local/ directories.

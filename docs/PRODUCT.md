@@ -1,128 +1,77 @@
-# Product requirements
+# Product overview
 
-## Goal and priorities
+Sift browses existing sound effects, samples, and music on Windows. Its main
+workflow is finding a sound, previewing it, keeping a reference, and copying the
+original file into another application or folder. Source audio stays in place.
 
-Sift is a fast, resource-efficient desktop application for finding, previewing,
-organizing, and exporting sounds from large local collections. Sound effects
-are a primary use case; samples and complete music files must also work.
-Sononym is a functional reference. Sift has its own implementation and design.
+## Current workflow
 
-Prioritize preserving audio and user data, a responsive workflow, low CPU/RAM
-and disk activity, and clear features. Performance and reliability are part
-of a feature's quality.
+Libraries group one or more source folders under a name. A library or folder
+selection scopes the sound table and search. Folder expansion and sound scope
+are separate actions; breadcrumbs provide a path back through ancestors.
+Recently visited libraries, folders, and collections remember their search,
+selection, and list position during the open session. Restoring a sound prepares
+it silently. See [Navigation](NAVIGATION.md) for bounds and scope.
 
-## Agreed foundations
+The selected sound has waveform, playback, seeking, volume, auto-play, and
+metadata controls. Global favorites provide quick access to saved references.
+Sound lists support multiple marks, keyboard navigation, and an active preview
+distinct from the marked set. Auto-play starts enabled. See [Selection](SELECTION.md).
+Collections keep named selections without duplicating audio. Names and saved
+membership changes persist automatically, with visible save failures and retry.
 
-- Rust is the primary language. The application works locally without accounts
-  or network access.
-- Projects collect references to sounds; a sound can belong to several projects.
-- Dragging from the application to an external folder copies the original file.
-- Tagging, project operations, and export do not modify library originals.
-- AI categorization is outside the planned core product.
-- Similarity search is a possible later step; the core workflow works without it.
-- Small, coherent checkpoint commits are the standard workflow.
-- Documentation, product UI, and all user-visible content are in English.
+Windows folder notifications update indexed metadata after changes settle.
+Pausing live updates retains data; resuming checks for missed changes.
+Missing and unavailable sources remain distinguishable from empty results or
+unsupported audio.
 
-Windows is the proposed first platform, based on Benjamin's working environment.
-A portable core should allow further platforms without promising support before
-verification. Publishing, licensing, and final visual design remain open.
+External dragging offers copying to Explorer. The destination owns copying
+progress and conflicts. Internal dragging adds references to collections.
 
-## Libraries and indexing
+Libraries and Favorites have sortable column headings. Collection contents
+provide a compact sort menu with an insertion-order option. Sorting preserves
+marked source identities and the active preview; queries and ranges share the
+selected order. Numeric unknowns sort last. See [Sound ordering](SORTING.md).
 
-Users can register multiple library roots without importing or copying the
-entire collection. The index stores searchable metadata and source references.
-Removing a root from Sift must not delete its audio.
+The library table combines text with length, format, channel and sample-rate
+filters. Valid choices update results immediately. Active criteria can be
+removed individually or cleared; settings are remembered per library/folder
+during the session. Marking and copying use
+the same filtered view. See [Metadata filters](FILTERS.md).
 
-An initial scan shows genuine progress, errors, and pause/cancel controls.
-Later scans primarily process changed files. Define behavior for symbolic-link
-cycles, repeated roots, and overlapping roots. Changes during a scan must not
-produce a false completed state.
+Manual tags are global source associations, shared by libraries, favorites and
+collections. The editor creates/reuses names and adds/removes one association
+across marked sounds without replacing their other tags. Compact chips and
+library tag filters support finding tagged sounds. See [Tags](TAGS.md).
 
-Initial format targets are WAV, FLAC, MP3, and AIFF. Verify actual codec variants,
-bit depths, and metadata in the prototype. Reading a container is not equivalent
-to complete metadata or playback support. Report unsupported, corrupt, and
-unavailable files clearly and continue with the rest of the library.
+## Data preservation
 
-Metadata can include name, location, duration, size, format, channels, sample
-rate, meaningful bit depth, manual tags, and favorites. Derived analysis records
-its algorithm version and incomplete state. Music-specific BPM/pitch are later
-features and must support unknown values.
+Library registration, collection edits, and favoriting leave source names,
+contents, and locations unchanged. Removing saved items removes references.
+Durable registrations and saved selections are stored separately from the
+rebuildable catalog and waveform cache.
 
-## Finding and previewing sounds
+Cancelled or incomplete inventories preserve previous cached rows. Migration
+errors preserve durable data. Missing sources retain saved references, and
+ambiguous locations are not matched automatically to replacement sounds.
 
-- Search names, paths, and tags; filter and sort relevant metadata.
-- Handle large results with stable sorting and bounded data loading.
-- Support keyboard navigation, multi-selection, and clear active-sound state.
-- Show a reusable waveform with play/pause, stop, seek, and volume controls.
-- Rapid selection changes stop the old preview and prioritize the new selection.
-- Stream or buffer long music files with bounded memory, including waveform work.
-- Device interruption must produce a clear state and support recovery.
+## Supported scope
 
-Background analysis must not block search. A delayed response to an old query
-must not replace a newer result. Distinguish no matches, pending search, and
-search failure in the UI.
+The application is a Windows prototype with a CLI-only configuration sharing
+the same core. WAV, FLAC, MP3, and AIFF metadata are recognized; codec variants,
+devices, external drives, and network shares have individual qualification limits.
+The core workflow works offline.
 
-## Projects and saving
+Collection adds and removals accept marked groups of up to 128 sounds, including
+unloaded rows. Internal group dragging saves references; outgoing dragging offers
+up to 128 marked originals to the destination as copies. Collection folders,
+user-controlled item ordering, application-managed export, portable saved
+selections, and explicit source relinking are not implemented. Similarity search
+is optional future work. Recording, audio editing, cloud synchronization, and
+a timeline are outside the current product scope.
 
-Projects can be created, renamed, opened, and saved. They contain selected
-sounds, ordering, virtual folders, and optional export names and notes.
-Deleting a project or item removes its references.
-
-Accepted edits are saved transactionally and survive restart. Show pending or
-failed saves and preserve unsaved changes for retry. Cache cleanup and full
-reindexing must not remove projects, favorites, or manual tags.
-
-Show correct status when a source moves, changes, or disappears. Users can
-reconnect a root or select a replacement source. Ambiguous matches must not
-silently attach a project to the wrong sound. Making a project self-contained
-by copying sounds into its folder is a later export option; ordinary projects
-must not duplicate the library.
-
-## Copying, export, and drag-and-drop
-
-Users can drag one or more project sounds into Explorer and receive copies with
-unchanged audio content. Exporting to a chosen folder is a complementary
-workflow. Library originals and project references remain intact.
-
-Plan destination paths before writing. Offer skip, unique naming, or explicit
-replacement for conflicts; default to preserving existing files. Handle reserved
-Windows names, Unicode, long paths, permissions, full disks, and missing sources.
-
-Cancellation reports files already copied and files remaining. Clean up only
-temporary files created by Sift. Do not report an entire batch as successful
-after partial failure. Test native dragging in Explorer; validate DAW/other
-application support for each actual target.
-
-## Later features
-
-- Similarity search using precomputed acoustic descriptors. Evaluate quality for
-  sound effects and music, and present similarity as a ranking.
-- Exact duplicates using content hashes; acoustically close duplicates are a
-  separate result with different confidence. No automatic deletion.
-- Richer tagging, saved queries, export naming, and analysis filters.
-- Portable project descriptions and package exports with an explicit schema.
-
-Semantic search, cloud sync, recording, plugin formats, audio editing, a
-timeline/DAW, and full Sononym parity are outside the first delivery. Expanding
-into these areas requires a concrete product decision.
-
-## Proposed delivery stages and acceptance
-
-| Stage | Delivery | Acceptance |
-| --- | --- | --- |
-| 0 | Repository, instructions, specification | Documents distinguish decisions, proposals, and actual status. |
-| 1 | Technical prototype | Large virtual list, playback, waveform, and outgoing copy drag work on Windows; CPU/RAM are measured. |
-| 2 | Libraries and search | Register, scan, search, and restart; handle changed and corrupt files. |
-| 3 | Projects | Save references, ordering, and folders; preserve originals; show missing sources. |
-| 4 | Copying and robustness | Verify multi-selection, collisions, cancellation, and failures with unchanged sources. |
-| 5 | Performance and distribution | Verify representative measurements, recovery, and a Windows package. |
-| 6 | Optional similarity search | Demonstrate useful rankings and acceptable resource cost. |
-
-Stages describe direction, not authorization to implement everything at once.
-Split each stage into natural implementation checkpoints when carrying it out.
-
-## References
-
-- [Sononym](https://www.sononym.net/)
-- [Sononym projects](https://www.sononym.net/docs/manual/projects/)
-- [Sononym similarity search](https://www.sononym.net/docs/manual/similarity-search/)
+Responsiveness and bounded resource use are design goals. Existing observations
+and remaining qualification are described in [Performance](PERFORMANCE.md).
+The feature contracts are documented in [Libraries](LIBRARIES.md),
+[Collections](COLLECTIONS.md), [Favorites](FAVORITES.md), [Preview](PREVIEW.md),
+and [Drag and drop](DRAG-AND-DROP.md).

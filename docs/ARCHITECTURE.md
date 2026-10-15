@@ -1,163 +1,209 @@
-# Technical direction
+# Architecture
 
-This document describes intended architecture. None of the modules exists yet.
-Rust is agreed; validate the proposed libraries in a prototype before recording
-selected versions, alternatives, and reasons.
+Sift is one Rust application with an embedded catalog and a native desktop UI.
+The desktop and command-line tools share the same indexing and storage code.
+All core workflows run locally without accounts or network services.
 
-The [stack review](STACK-REVIEW.md) records the 2026-10-09 comparison, including
-Slint/Iced/GPUI, storage alternatives, audio streaming options, and remaining
-prototype checks. Keep egui as the first candidate and Slint as the main UI
-alternative; no comparative runtime measurements exist yet.
+## Components
 
-## Candidates and decision boundaries
+| Module | Responsibility |
+| --- | --- |
+| `desktop` | Window layout, navigation, catalog events, and selection between views |
+| `desktop::preview` | Selected-source state, source validation generations, waveform results, playback controls, and details |
+| `desktop::selection` | View-local source marks, range generations, keyboard focus, and pending navigation |
+| `desktop::library_view` | Library/folder query, selection, ordering, page lifecycle, errors, and remembered sound-table views |
+| `desktop::navigation` | Bounded inactive view caches shared by the library, tree, and collection owners |
+| `desktop::libraries` | Library registrations, folder scopes, breadcrumbs, and tree navigation |
+| `desktop::collections` / `favorites` | Saved-reference views and pending edits |
+| `desktop::saved` | Shared saved-storage worker, operation IDs, and reply routing between the two independent views |
+| `desktop::tags` | Tag input, pending edits, bounded membership cache, summaries and suggestion generations |
+| `desktop::diagnostics` | Optional native capture, frame counters, and joined background report writers |
+| `library` | Source enumeration, metadata probing, revisions, and synchronization |
+| `catalog` / `search` | Searchable metadata, folder queries, and query semantics |
+| `libraries` / `collections` | Durable library registrations and saved references |
+| `tags` | Durable manual associations, bounded tag reads/edits, and tag filter identities |
+| `worker` | Catalog read/index owners and bounded desktop requests |
+| `audio` | Decoding, rate conversion, buffering, and output-device ownership |
+| `waveform` | Peak analysis and derived cache |
+| `watch` | Native Windows notifications, coalescing, and recovery |
+| `platform` | Copy-only Windows file transfer and its native message host |
 
-| Area | Candidate | Verify before committing to it |
+`Preview` owns its waveform and playback workers. Selection, source revisions,
+errors, and request generations live with the transitions that update them.
+The window reads the selected reference through that owner's interface; late
+source, waveform, and playback replies are rejected within the preview flow.
+
+## Storage
+
+The Windows default directory is `%LOCALAPPDATA%\Sift\`. A custom catalog path
+produces corresponding companion databases.
+
+| Database | Data | Lifetime |
 | --- | --- | --- |
-| UI | egui/eframe | Resource usage, large lists, waveforms, keyboard interaction, native outgoing drag. |
-| Storage | Bundled SQLite with FTS5 through rusqlite | FTS5 availability, transactions, migration, search semantics, locking, actual query plans. |
-| Decoding | Symphonia | Real codec variants, seeking, metadata, and long files. |
-| Audio device | CPAL | Windows devices, sample-rate adaptation, latency, underruns, and device changes. |
-| Resampling | Rubato where needed | Conversion quality, throughput, latency, and rate-change behavior. |
-| Audio transport | rtrb SPSC ring buffer | Capacity, underruns, cancellation, buffer generations, and callback safety. |
-| Windows integration | Small windows-rs adapter | Copy-only file transfer, COM ownership, multi-selection, and Explorer conflict behavior. |
+| `catalog.sqlite` | Schema-4 metadata, native locators, FTS5 index, and derived folders | Rebuildable |
+| `catalog.libraries.sqlite` | Schema-1 named libraries and source registrations | Durable |
+| `catalog.collections.sqlite` | Schema-3 collections, entries, and global favorites | Durable |
+| `catalog.tags.sqlite` | Schema-1 tag names and native-source associations | Durable |
+| `catalog.waveforms.sqlite` | Versioned min/max peaks keyed by source revision | Rebuildable |
 
-The backend is embedded in the desktop process. Typed commands and results
-connect UI to bounded workers; no local HTTP server or database service is
-part of this design. Evaluate WASAPI shared playback first. Rodio and Creek
-remain audio baselines/alternatives if they meet the same resource contracts.
+Durable IDs are independent of catalog row IDs. Rebuilding the catalog leaves
+libraries, collections, and favorites intact. Schema changes use transactions;
+unsupported versions and failed migrations return errors without resetting data.
+Manual tags also survive index rebuilding; their bounded owner and shared query
+predicates are described in [Tags](TAGS.md).
 
-A modern tool should provide a concrete improvement. Choose a compatible,
-maintained stable toolchain and record its version in `rust-toolchain.toml`
-when Cargo is introduced. Start with Rust edition 2024 if the candidates support
-it. Track the application's `Cargo.lock`. Nightly, large frameworks, and new
-services require actual needs.
+SQLite connections have explicit worker owners. The index owner has a writable
+catalog connection and owns library registration changes. Search uses an
+independent read-only connection. A separate collection worker owns saved edits
+and favorite reads. Accepted durable changes drain during shutdown even when
+completion events are no longer read by the UI.
 
-Native UI is the starting point. Change the UI choice if prototype evidence
-shows another option improves integration or performance. Record a short
-decision here or in a focused ADR before a major change. Keep library rules
-independent of the UI.
+An independent tag worker owns manual-label reads and writes. Source membership,
+selection summaries and suggestions have separate generations and bounded queues.
+The saved-view coordinator contains this owner without routing its replies through
+collection/favorite operation IDs. Catalog readers attach tag data read-only only
+for tag-filtered queries; their count memo also observes the tag database revision.
 
-## Responsibilities and dependencies
+The desktop's saved-storage owner routes replies to Collections or Favorites.
+Each view retains its own selection, pages and submitted edit; one operation
+counter identifies edits across both. A failed collection edit does not consume
+or redirect a favorite completion, and the shared actor preserves accepted
+commands when the window closes.
 
-| Area | Owns | Must not own |
-| --- | --- | --- |
-| `app` | Startup, configuration, wiring, controlled shutdown | Search rules, decoding, SQL in event handlers. |
-| `library` | Roots, file identity, scanning, library state | UI or audio devices. |
-| `search` | Queries, filters, stable sorting, result pages | Direct UI widget access. |
-| `projects` | Projects, references, ordering, save rules | Modification of library originals. |
-| `audio` | Decode, buffering, seek, resampling, playback | Project persistence and search queries. |
-| `analysis` | Waveforms and versioned descriptors | UI thread or unbounded full-file loading. |
-| `storage` | SQL, migrations, transaction boundaries | Product decisions and native dragging. |
-| `export` | Destination planning, conflicts, copying, outcomes | Source deletion or movement. |
-| `platform` | Native dialogs, path semantics, drag-and-drop | Portable domain rules. |
-| `ui` | Presentation, interaction, visible state | Blocking I/O and hidden business rules. |
+The catalog owns one bounded result-count memo on its connection. Generated SQL
+predicates and native bindings identify the view; direction/column changes reuse
+the same count. A main read snapshot is established before checking that
+connection's data version and own change counter. Commits invalidate the memo.
+Descriptors above 64 KiB are counted without retention. Text matching joins FTS
+IDs to live samples, and page queries select compact IDs before loading at most
+128 metadata rows. No persistent schema or audio data is added for this cache.
 
-These are responsibility boundaries, not a requirement for ten crates or empty
-module files. Begin with one Cargo package and cohesive modules. Extract a
-crate only for a real dependency, reuse, or testing need. Portable domain
-logic must not depend on egui, CPAL, or Windows objects.
+Captured library queries pair literal text with validated metadata criteria.
+Pages, ranges, cursor lookup and group resolution compile those criteria through
+the same parameterized predicate owner. No audio probing or schema change is
+needed to filter indexed metadata. The desktop stores applied criteria with
+the library view; incomplete popup input is transient and valid changes submit
+the existing background query. See [Filters](FILTERS.md).
 
-## Data model and file identity
+The same query owner retains one page anchor with its actual SQL first/last
+sort keys, at most 2 KiB of key data per endpoint. Matching criteria, revision,
+order, and adjacent offset permit a forward/backward seek; other requests use
+random access. Unrestricted nullable metadata orders retain the indexed offset
+path where it measured cheaper. Random pages can start from the nearer end
+using the verified count; backward traversal reverses NULL placement and tie
+keys, then restores the visible order on the bounded result. No table of all
+result IDs is retained. See [Search measurements](SEARCH-PERFORMANCE.md).
 
-- `LibraryRoot`: stable ID, root locator, availability.
-- `Sample`: stable ID, root and relative OS path, file revision, metadata.
-- `Project` / `ProjectItem`: separate IDs, sample references, ordering,
-  optional virtual folder, export name, and note.
-- Manual tags/favorites: durable user information with an explicit owner.
-- Waveforms/analysis: rebuildable derived data with versioned keys.
+Collection group commands carry the captured query, folder scope, native marks,
+and destination ID. The collection actor resolves the full marked set before
+saving, using one lazy read-only catalog connection for library selections.
+Favorites and collection inputs use its durable connection. Resolution returns
+at most 128 references; larger or changed explicit sets fail without saving a
+prefix. Removal resolves membership and deletes in the same transaction without
+inspecting source files. Accepted group commands also drain during shutdown.
 
-A content hash is not the sole file identity: different files may contain
-identical data and a file may change content. Persistent sample ID, location,
-and content revision have different meanings. Document use of OS file IDs,
-relative paths, and optional hashes. Ambiguous relinking needs a choice;
-missing files retain references and manual data.
+## Paths and identity
 
-Preserve OS paths with `Path`/`PathBuf`. Lossy display conversion must not
-feed back into file operations. Choose round-trip-safe path storage for supported
-platforms. Do not reduce Windows case/Unicode rules to a globally lowercased
-string as file identity.
+Windows locators are stored as little-endian UTF-16 bytes, including unpaired
+surrogates. Unix locators use native bytes. Display text is separate from paths
+used for file operations. Exact native locators are deduplicated across
+overlapping roots; aliases and hard links remain distinct locations.
 
-## Threads and work queues
+File location, catalog ID, and content identity are separate concepts. Current
+revision checks use file size and available timestamps. Missing sources retain
+saved references. Automatic relinking and content-hash deduplication are not
+implemented.
 
-The UI thread handles presentation and short commands. Disk I/O, SQL, hashing,
-decoding, and analysis run in workers with bounded queues, clear ownership,
-and controlled shutdown. SQLite connections have deliberate owners; do not
-create an unbounded thread or connection per job.
+Shared file-metadata primitives identify links/reparse points and convert signed
+epoch timestamps, including times before 1970. Index and saved-reference SQL use
+optional 64-bit nanoseconds; timestamps outside that range remain unknown. The
+derived waveform cache uses decimal timestamp keys instead of debug text. Older
+cache keys miss and rebuild on demand; durable saved data requires no migration.
 
-Interaction and audio decoding take priority over analysis. Jobs have
-IDs/generations, cancellation, and defined outcomes. Stale search, waveform,
-or decode work must not update a newer selection. Coalesce progress events
-and apply backpressure instead of flooding the UI.
+## Background work
 
-The audio callback consumes prepared samples from a bounded buffer. It must not
-perform file I/O, SQL, logging, heap allocation, or wait on locks/other threads.
-On underrun, produce defined silence and update counters read outside the
-callback. Seeking/device changes use an explicit state machine and versioned
-buffers to prevent old audio entering new playback.
+Catalog event/read/index-command queues hold 8/4/4 messages. Search results have
+128 rows per page; the library view retains four pages. Folder queries return
+64 children, and the desktop keeps at most 32 branches open. Query, folder, and
+selected-source generations prevent old replies from replacing newer state.
 
-Use synchronous Rust with a small number of workers where sufficient. Introduce
-an async runtime only for a concrete integration need. CPU-heavy jobs do not
-become inexpensive merely by placing them in an async function.
+Selection is separate from preview. Each sound view owns its marks and focus.
+Library queries, result generations, pending reads and page errors stay with
+`LibraryView`. Libraries and Favorites share the bounded page-cache rule;
+their selection and query lifecycles remain with the respective view owners.
+Ctrl+A is a compact view-wide intent; explicit ranges use native path endpoints
+and resolve on existing workers in one SQL snapshot. Replies and mark sets have
+path-count/byte bounds. Generations reject obsolete ranges, while marking and
+keyboard navigation leave durable data and original audio untouched. See
+[Selection](SELECTION.md).
 
-## Storage and recovery
+Internal drags carry an immutable selection intent. The add button uses the last
+used sound list; selecting a collection destination retains one bounded prior
+collection snapshot until the user makes new marks there. SQL and source checks
+remain off the UI thread, and failed group edits retain the captured command for
+retry or discard.
 
-Separate durable user data from rebuildable library/analysis indexes. Logical
-separation may initially share a database if deletion and migrations are clear.
-Use versioned migrations, foreign keys, and transactions for multi-step writes.
-Test rollback and user-data preservation.
+Session view state stays with each view owner. Library/folder queries and marks
+move into `LibraryView`'s cache; library trees and collection contents have their
+own caches. Each retains at most 16 inactive views and 8 MiB of estimated state.
+Pages, audio data, workers, and pending edits are excluded. Generations remain
+monotonic across restoration; unfinished navigation/ranges are cancelled. The
+preview owner prepares restored references silently and verifies their native
+sources. See [Navigation](NAVIGATION.md) for user-visible behavior and limits.
 
-Evaluate WAL and read/write connections against actual workflows. Back up SQLite
-using a consistent snapshot method; copying an active database file does not
-automatically include uncheckpointed WAL state. An unsupported newer schema
-must cause an error, not reset the database.
+Workers wait for requests or native signals while idle and request a repaint
+when results arrive. The UI performs presentation and submits short commands;
+file inspection, SQL, decoding, and peak analysis run outside it. Playback uses
+timed repaints only while loading or playing.
 
-Distinguish unknown metadata from zero, and errors from pending analysis.
-Index actual filter/sort patterns and inspect query plans for large result sets.
-Version serialized projects and settings.
+The Windows watcher has one notification consumer and native directory
+subscriptions. Coalescing, explicit notification-loss recovery, pause/resume,
+and offline-root handling are described in [Indexing](INDEXING.md).
 
-Define token, prefix, and substring matching explicitly before choosing FTS5
-tokenizers. Verify filename punctuation, Unicode, literal queries, and short
-queries; do not substitute unbounded LIKE scans for indexed search by accident.
+## Audio and native integration
 
-## Indexes, caches, and similarity
+The playback worker owns decoding and the CPAL device. Its callback consumes
+preallocated ring-buffer frames and atomics. Device callbacks perform no file
+I/O, logging, allocation, or blocking synchronization. Buffer sizes, conversion
+rules, and output limits are described in [Preview](PREVIEW.md).
 
-Scan in bounded batches. Hash or decode only when required. Size and modification
-time are inexpensive change indicators, not proof of identical content.
-File watching needs overflow/reconciliation behavior and an off switch.
-An unavailable root is not evidence that the user deleted its contents.
+Outgoing dragging validates references on a preparation worker, then posts the
+OLE gesture to a private HWND on the window's input thread. Native objects stay
+on that thread, and callback pointers retain their owning state through nested
+message delivery. Native drag and watcher FFI are the scoped unsafe boundaries;
+safety comments document their handle, pointer, and thread contracts.
+See [Drag and drop](DRAG-AND-DROP.md).
 
-Waveform caches can use multiresolution peaks for large files. Keys include file
-revision, algorithm version, and relevant parameters. Every cache needs a size
-limit, eviction, and invalidation. No cache may hold the only copy of a project
-or manually entered tags.
+The same preparation worker resolves captured library/favorite/collection marks
+through lazy read-only catalog and saved-reference connections. It preserves
+query/scope identity across UI changes and validates the complete group before
+encoding. Its cancellation token spans resolution, file inspection, encoding,
+and native dispatch; released or cancelled gestures never restart from late
+ready results. The UI consumes each internal drag payload once at handoff.
 
-If requested, similarity starts with normalized, versioned acoustic descriptors
-and measured quality. Compare simple exact search before adding an approximate
-vector index; ANN has memory and maintenance costs. Embeddings can be added
-later without making AI categorization mandatory.
+## Build configuration
 
-## Native export
+Catalog schema 4 and saved-reference schema 3 add indexed sound ordering.
+Page reads, ranges, and native cursor/anchor lookup share a typed ordering rule;
+numeric unknowns sort last. Existing saved entry IDs and insertion order survive
+the transactional migration. See [Sound ordering](SORTING.md).
 
-Windows file transfer must offer copying as its only effect and provide proper
-native file references. Internal UI dragging is a separate contract. Test
-multiple files, Unicode, conflicts, and modifier keys in Explorer.
+`rust-toolchain.toml` pins Rust 1.98.1; the package uses edition 2024 and tracks
+`Cargo.lock`. The desktop uses egui/eframe 0.36.2 with Glow, and RFD 0.17.2 for
+the Windows folder picker. SQLite is bundled through rusqlite 0.40.2.
+Symphonia 0.6.1, CPAL 0.18.2, Rubato 5.0.1, and rtrb 0.3.3 supply audio support.
+The native adapters use windows-rs 0.62.2 and windows-file-watcher 0.2.2.
 
-For application-managed export, validate targets, plan conflicts, and copy in
-bounded blocks into a unique temporary file in the destination folder. Publish
-the completed file with verified platform semantics; checking that a target
-does not exist and then using a normal rename does not itself prevent races or
-replacement. Replacement requires an explicit user choice. Targets must not
-alias sources. Record per-file success, cancellation, failure, and prior copies.
+Native screenshot and frame-report diagnostics have their own optional lifecycle.
+They create output files on bounded background writers and refuse replacement;
+shutdown joins those writers. Ordinary sessions do not count frames or create a
+diagnostic writer unless a report/capture was requested.
 
-## Implementation references
+Default features enable the desktop, playback, and native dragging.
+`--no-default-features` provides the CLI-only configuration. WGPU is optional
+through `wgpu-renderer` and selected with `SIFT_RENDERER=wgpu`; Glow remains the
+default. The [renderer comparison](BASELINE.md) records the measurement basis.
 
-Verify documentation against pinned versions when writing code.
-
-- [egui](https://github.com/emilk/egui)
-- [SQLite FTS5](https://sqlite.org/fts5.html)
-- [Symphonia](https://github.com/pdeljanov/Symphonia)
-- [CPAL](https://github.com/RustAudio/cpal)
-- [Rubato](https://github.com/HEnquist/rubato)
-- [rtrb](https://github.com/mgeier/rtrb)
-- [windows-rs](https://github.com/microsoft/windows-rs)
-- [Windows Shell transfer](https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios)
+Verification sources are maintained privately. The build script enables unit
+hooks when `tests/unit/` exists; a source-only checkout builds without those
+files. This compile-time configuration adds no application runtime dependency.

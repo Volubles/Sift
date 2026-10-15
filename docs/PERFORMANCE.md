@@ -1,16 +1,15 @@
-# Performance and evidence
+# Performance
 
-## Status and proposed budgets
+Sift uses bounded result pages, worker queues, and derived caches. Visible rows
+are rendered on demand; idle workers wait for commands or native signals.
+These resource controls describe the implementation, not a guarantee for every
+library or device.
 
-No application measurements exist yet. The following are proposed prototype
-budgets, not user-confirmed SLAs or achieved results. They make efficiency
-measurable. Revise them through a reasoned product decision after measurement;
-do not silently raise them to make a regression pass.
+## Design targets
 
-Reference scenario: Windows, local SSD, release build, 100,000 indexed metadata
-records, a bounded result page, no scanning or playback. Record actual hardware
-and content. Synthetic metadata is not a substitute for real files in audio
-or scanning measurements.
+The following provisional targets use a Windows release build, 100,000 indexed
+metadata records, a local SSD, and a loaded library without scanning/playback.
+They are design targets, not achieved results or service guarantees.
 
 | Metric | Proposed target | Definition |
 | --- | --- | --- |
@@ -21,65 +20,46 @@ or scanning measurements.
 | Warm preview | p95 at most 150 ms | Play/selection to first audible sound; state cache, device, buffer size. |
 | Scrolling | p95 CPU frame work within 16.7 ms at 60 Hz | Measure active scrolling and visible rows; also report dropped frames. |
 
-True audio latency may require loopback or external recording. Time until a
-block is queued to CPAL measures only part of the path. An interactive library
-before all background metadata is ready is valid when its state is clear.
+Usable startup means an interactive list, and preview latency means audible
+output. Window creation, a queued CPAL block, and a worker-ready signal measure
+different stages and cannot substitute for those end-to-end observations.
 
-## Measurement scenarios
+## Recorded measurements
 
-1. Empty app, idle app, minimized app, library loaded without activity.
-2. 10,000 and 100,000 metadata records; 1,000,000 as a later stress case.
-3. Cold/warm startup and cold/warm first preview.
-4. Search, sorting, scrolling, and rapid query changes.
-5. WAV/FLAC/MP3/AIFF: short effects, long tracks, channel/rate variants.
-6. Playback and rapid selection/seeking during scanning and analysis.
-7. Pause, cancellation, device loss, shutdown with queued work.
-8. Projects with many references and exports of many/large files.
-9. Repeated opening/closing, project switching, and reindexing to detect leaks.
+- [Renderer and audio resource observations](BASELINE.md) compare Glow/WGPU and
+  document idle/activity limits for the desktop.
+- [The 100,000-file index measurement](INDEXING-BASELINE.md) records initial
+  import, unchanged inventories, native update latency, and headless resources.
+- [Sound ordering](SORTING.md#sql-measurement) records warm ordered SQL pages and
+  cursor lookup on 100,000 generated metadata rows, including broad-match and
+  deep-folder limitations.
+- [Search and pagination comparison](SEARCH-PERFORMANCE.md) records before/after
+  latency, correctness signatures, CPU time, and process memory on one fixed
+  100,000-row fixture.
+- [Metadata filter measurements](FILTERS.md#sql-measurement) record combined
+  predicates, unknown lengths and page walks on the same fixture.
+- [Manual tag measurements](TAGS.md#sql-measurement) compare tag query paths on
+  the fixed fixture, including the remaining broad-text limitation.
 
-NAS/external disks are separate scenarios, not interchangeable with SSD results.
-Identify synthetic fixtures explicitly. Request a representative collection or
-use approved sample files; do not scan private folders by habit.
+The index fixture used tiny generated WAV files. Unchanged refreshes improved,
+while initial import remained slower than the preceding implementation.
+Neither that component result nor the metadata-only desktop catalog qualifies
+whole-application performance on representative sound libraries.
 
-## Method
+## Measurement coverage
 
-- Compare the same release profile, commits, machine, and power configuration.
-- Record OS, CPU, logical cores, RAM, disk, audio device, backend, and sample rate.
-- Record file count, total bytes, format/duration distribution, and index size.
-- Define cold/warm precisely; do not manipulate system caches without a need.
-- Repeat latency operations and report count, median, p95, and maximum.
-- Measure CPU/RAM over time; one Task Manager screenshot is not a baseline.
-- Report peak memory, disk I/O, queue sizes, and underruns alongside averages.
-- Check whether renderer/drivers move work into GPU rather than eliminating it.
-- Preserve reproducible commands and methods. Private raw data belongs in
-  ignored `benchmarks/results/`; a sanitized summary can be committed.
+Comparisons use the same build profile, hardware, power settings, and defined
+cache state. Reports identify file count/bytes, format and duration distribution,
+index size, OS/storage/device configuration, operation boundaries, repetitions,
+latency percentiles, process CPU normalization, memory, and observed activity.
+GPU costs and audible latency are separate measurements.
 
-Split scanning throughput into enumeration, metadata, decoding, waveforms,
-hashing, and analysis. Files per second without content details are not
-comparable. Bound background CPU and prioritize interaction/playback.
-Idle operation and full analysis have different resource budgets.
+Current qualification leaves representative long files, external drives/NAS,
+device loss, rapid seeking during indexing, active scrolling, large collections,
+repeated startup/shutdown, and sustained analysis as further scenarios. Synthetic
+metadata is suitable for list-loading checks; real generated audio is needed for
+decoding and inventory measurements.
 
-## Prevent structural waste
-
-No unbounded queues/caches, whole-library decoding into RAM, continuous repaint,
-or tight polling without visible changes. Load relevant data, render visible
-rows, and allow background work to pause, cancel, and leave defined state.
-
-Profile a demonstrated bottleneck before optimization and preserve a simple
-baseline. An algorithm microbenchmark does not prove lower application memory,
-faster searches, or uninterrupted playback. A `perf` commit needs relevant
-before/after evidence and preserved behavior.
-
-## Benchmark report template
-
-```text
-Commit / build profile / date:
-Machine / OS / audio device:
-Library / scenario / cache state:
-Method / commands / repetitions:
-CPU / private bytes / working set / GPU / peak:
-Latency median / p95 / maximum:
-Disk I/O / underruns / queues:
-Baseline comparison:
-Limitations / raw data location / conclusion:
-```
+Raw reports, fixtures, and measurement helpers are maintained locally. Published
+summaries retain their methods, results, and limitations. No new performance
+claim follows from source layout or documentation changes alone.

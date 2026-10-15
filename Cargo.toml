@@ -1,0 +1,42 @@
+[package]
+name = "sift"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+description = "A resource-efficient local sample browser"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:eframe", "dep:rfd", "playback", "native-drag"]
+native-drag = ["dep:windows", "dep:windows-core"]
+wgpu-renderer = ["desktop", "eframe/wgpu"]
+playback = ["dep:cpal"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
+symphonia = { version = "=0.6.1", default-features = false, features = ["wav", "aiff", "pcm", "flac", "mp3"] }
+thiserror = "2"
+rubato = "=5.0.1"
+rtrb = "=0.3.3"
+cpal = { version = "=0.18.2", optional = true, default-features = false }
+eframe = { version = "=0.36.2", optional = true, default-features = false, features = ["default_fonts", "glow", "accesskit", "x11", "wayland"] }
+
+[target.'cfg(windows)'.dependencies]
+rfd = { version = "=0.17.2", optional = true, default-features = false }
+windows-core = { version = "=0.62.2", optional = true }
+windows = { version = "=0.62.2", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-file-watcher = { version = "=0.2.2", default-features = false }
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
