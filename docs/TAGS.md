@@ -30,6 +30,16 @@ its associations automatically, and identical bytes at another locator do not
 share tags. Associations at the old locator remain preserved for explicit recovery.
 Global tag renaming/deletion, colors and relinking are further features.
 
+The storage API supports transactional definition rename, merge and deletion.
+Renaming preserves identity and rejects another tag's name. Merging keeps the
+destination identity, unions associations without duplicates, and removes the
+source definition. Deletion removes only that definition and its associations.
+Missing sources participate without file access. These operations need no schema
+migration. Definition browsing uses name-prefix keyset pages of at most 32 tags
+with global association counts, including empty definitions and missing sources.
+The background tag owner serializes accepted definition changes with association
+edits and drains them on shutdown; read replies carry independent generations.
+
 The tag store holds global labels and their native source associations in
 `catalog.tags.sqlite`. Tag identities are independent of rebuildable catalog
 rows, collection membership and favorites. Creating or removing an association

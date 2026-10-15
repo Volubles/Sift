@@ -1,6 +1,6 @@
 //! Bounded tag reads and accepted edits, owned by one background connection.
 
-use super::{Filter, Membership, Store, Summary, Tag, TagId};
+use super::{Change, Cursor, Filter, Membership, Mutation, Page, Store, Summary, Tag, TagId};
 use crate::collections::{ReferenceSelection, SelectionOrigin};
 use std::path::PathBuf;
 use std::sync::{
@@ -40,6 +40,14 @@ pub enum Event {
         operation: u64,
         result: Result<Vec<PathBuf>, String>,
     },
+    ManagementPage {
+        generation: u64,
+        result: Result<Page, String>,
+    },
+    Managed {
+        operation: u64,
+        result: Result<Change, String>,
+    },
 }
 enum Command {
     Suggestions {
@@ -60,12 +68,22 @@ enum Command {
         target: Target,
         edit: Edit,
     },
+    ManagementPage {
+        generation: u64,
+        prefix: String,
+        after: Option<Cursor>,
+    },
+    Manage {
+        operation: u64,
+        mutation: Mutation,
+    },
 }
 #[derive(Default)]
 struct Generations {
     suggestions: AtomicU64,
     status: AtomicU64,
     summary: AtomicU64,
+    management: AtomicU64,
 }
 
 pub struct Worker {
@@ -109,15 +127,40 @@ impl Worker {
                         Command::Summary { generation, .. } => {
                             *generation < generations.summary.load(Ordering::Acquire)
                         }
-                        Command::Edit { .. } => false,
+                        Command::ManagementPage { generation, .. } => {
+                            *generation < generations.management.load(Ordering::Acquire)
+                        }
+                        Command::Edit { .. } | Command::Manage { .. } => false,
                     };
-                    if !matches!(command, Command::Edit { .. }) && (!listening || stale) {
+                    if !matches!(command, Command::Edit { .. } | Command::Manage { .. })
+                        && (!listening || stale)
+                    {
                         if listening {
                             wake();
                         }
                         continue;
                     }
                     let event = match command {
+                        Command::ManagementPage {
+                            generation,
+                            prefix,
+                            after,
+                        } => Event::ManagementPage {
+                            generation,
+                            result: store
+                                .tag_page(&prefix, after.as_ref())
+                                .map_err(|e| e.to_string()),
+                        },
+                        Command::Manage {
+                            operation,
+                            mutation,
+                        } => {
+                            let result = store.manage(&mutation).map_err(|e| e.to_string());
+                            if let Err(error) = &result {
+                                eprintln!("Tag management save {operation} failed: {error}");
+                            }
+                            Event::Managed { operation, result }
+                        }
                         Command::Suggestions { generation, prefix } => Event::Suggestions {
                             generation,
                             result: store.suggestions(&prefix).map_err(|e| e.to_string()),
@@ -202,15 +245,35 @@ impl Worker {
         self.send(Command::Summary { generation, target })
     }
     pub fn edit(&self, operation: u64, target: Target, edit: Edit) -> Result<(), String> {
+        self.submit(Command::Edit {
+            operation,
+            target,
+            edit,
+        })
+    }
+    pub fn management_page(&self, generation: u64, prefix: String, after: Option<Cursor>) -> bool {
+        self.reads
+            .management
+            .fetch_max(generation, Ordering::AcqRel);
+        self.send(Command::ManagementPage {
+            generation,
+            prefix,
+            after,
+        })
+    }
+    pub fn manage(&self, operation: u64, mutation: Mutation) -> Result<(), String> {
+        self.submit(Command::Manage {
+            operation,
+            mutation,
+        })
+    }
+    fn submit(&self, command: Command) -> Result<(), String> {
         match self
             .commands
             .as_ref()
             .ok_or("Tag storage is unavailable")?
-            .try_send(Command::Edit {
-                operation,
-                target,
-                edit,
-            }) {
+            .try_send(command)
+        {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err("Tag storage is busy; retry the pending edit".into()),
             Err(TrySendError::Disconnected(_)) => {

@@ -1,6 +1,9 @@
 //! Durable manual labels keyed by native source locators, independent of catalog IDs.
 
+mod management;
 pub mod worker;
+
+pub use management::{Change, Cursor, MANAGEMENT_PAGE_SIZE, Mutation, Page};
 
 use crate::path_codec;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
@@ -96,6 +99,10 @@ pub enum Error {
     InvalidName,
     #[error("Invalid tag identity")]
     InvalidTag,
+    #[error("A tag with this name already exists; merge the tags instead")]
+    NameExists,
+    #[error("Choose a different tag to merge into")]
+    SameTag,
     #[error("The tag no longer exists")]
     NotFound,
     #[error("Each sound can have at most {MAX_SOUND_TAGS} tags")]
